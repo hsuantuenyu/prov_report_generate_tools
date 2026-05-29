@@ -1,13 +1,13 @@
 /*
-* 描述：必填字段完整性统计，导出模板《省标非空表明细模板.xlsx》
+* 描述：必填字段完整性统计，导出模板《prov_column_level_2_detail.xlsx》
 */
 SELECT
-    -- 'prov_notnull_table_detail' importTableCode,
     city,
     org_code,
     org_name,
-    table_code,
-    -- '2' column_level,
+    table_code as table_name,
+    table_comment,
+    column_level,
     SUM(total_count) total_count,
     SUM(noEmpty_count) noEmpty_count,
     AVG(noEmpty_rate) noEmpty_rate
@@ -19,7 +19,8 @@ FROM (
         m.hospital_code,
         m.hospital_name,
         m.table_code,
-        -- n.column_level,
+        n.table_comment,
+        n.column_level,
         m.table_column,
         m.total_count - m.empty_count AS noEmpty_count,
         m.total_count,
@@ -39,6 +40,6 @@ FROM (
     and  m.sta_date <= '2026-05-25'
 ) A
 WHERE rn = 1
-GROUP BY city,org_code, org_name, hospital_code, hospital_name, table_code, table_seq
-ORDER BY city,hospital_code, table_seq
+GROUP BY city,org_code, org_name, table_code,table_comment, table_seq,column_level
+ORDER BY city,org_code, table_seq
 LIMIT 25000;

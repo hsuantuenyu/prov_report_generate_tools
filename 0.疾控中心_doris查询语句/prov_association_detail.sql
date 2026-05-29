@@ -1,13 +1,14 @@
 /***************************************************
-* 省标表关联关系统计：导出模板《省标关联关系明细模板.xlsx》
+* 省标表关联关系统计：导出模板《prov_association_detail.xlsx》
 ***************************************************/
 select
---  'prov_relation_detail' importTableCode,
   a.city,
   a.org_code,
   a.org_name,
   b.main_table_code table_name,
+  c.table_comment as table_comment,
   b.from_table_code association_table_name,
+  '' association_table_comment,
   sum(b.main_count) total_records,
   sum(b.from_count) association_records,
   case when sum(b.main_count) > 0 then (sum(b.from_count) / sum(b.main_count)) end association_rate 
@@ -56,6 +57,6 @@ from
  where a.org_code = b.hospital_code
  and a.is_516='是'
  and b.main_table_code = c.table_name
- group by a.city, a.org_code, a.org_name, b.main_table_code, b.from_table_code, b.main_count, b.from_count
- order by a.city, a.org_code
+ group by a.city, a.org_code, a.org_name, b.main_table_code, c.table_comment, b.from_table_code, b.main_count, b.from_count
+ order by a.city,a.org_code
  limit 50000

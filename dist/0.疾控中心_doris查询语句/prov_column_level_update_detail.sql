@@ -1,13 +1,13 @@
  /**********************************************************
- * 描述：必填、条件必填字段完整性统计_更新部分，导出模板《非空表明细模板.xlsx》 
+ * 描述：必填、条件必填字段完整性统计_更新部分，导出模板《prov_column_level_update_detail.xlsx》 
  ***********************************************************/
 select * from (
 SELECT
-    -- 'prov_notnull_table_detail' importTableCode,
       city,
-      hospital_code,
-      hospital_name,
-      table_code,
+      org_code,
+      org_name,
+      table_code table_name,
+      table_comment,
       'update_1' as table_type,
       SUM (total_count) total_count,
       SUM (noEmpty_count) noEmpty_count,
@@ -150,23 +150,25 @@ SELECT
         where m.table_code = n.table_code
           and m.table_column = n.table_column
       ) a,
-      ods_tem_prov_table_list b,
+      ods_tem_quality_prov_table_mapping b,
       ods_tem_cdc_v211_org_code_new c 
     WHERE
       a.rn = 1
       and a.table_code = b.table_Name 
+      and a.table_column = b.field_name
       and a.hospital_code = c.org_code
       and c.is_516 = '是'
       AND sta_date >= '2026-05-25'
       AND sta_date <= '2026-05-25'
-group by c.city, a.hospital_code, a.hospital_name, table_code
+group by city, org_code,org_name, table_code,table_comment
     union all 
     SELECT
     -- 'prov_notnull_table_detail' importTableCode,
-    city,
-      hospital_code,
-      hospital_name,
+      city,
+      org_code,
+      org_name,
       table_code,
+      table_comment,
       'update_3' as table_type,
       SUM (total_count) total_count,
       SUM (noEmpty_count) noEmpty_count,
@@ -210,15 +212,16 @@ group by c.city, a.hospital_code, a.hospital_name, table_code
         where m.table_code = n.table_code
           and m.table_column = n.table_column
       ) a,
-      ods_tem_prov_table_list b,
+      ods_tem_quality_prov_table_mapping b,
       ods_tem_cdc_v211_org_code_new c 
     WHERE
       a.rn = 1
       and a.table_code = b.table_Name 
+      and a.table_column = b.field_name
       and a.hospital_code = c.org_code
       and c.is_516 = '是'
       AND sta_date >= '2026-05-25'
       AND sta_date <= '2026-05-25'
-group by c.city, a.hospital_code, a.hospital_name, table_code) f 
-order by hospital_code
+group by city, org_code, org_name, table_code,table_comment) f 
+order by city, org_code
 limit 50000;

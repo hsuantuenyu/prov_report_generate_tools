@@ -3,15 +3,17 @@
  ***********************************************************/
 select * from (
 SELECT
-      city,
-      org_code,
-      org_name,
-      table_code table_name,
-      table_comment,
+      c.city,
+      c.org_code,
+      c.org_name,
+      a.table_code table_name,
+      b.table_comment,
       'update_1' as table_type,
-      SUM (total_count) total_count,
-      SUM (noEmpty_count) noEmpty_count,
-      avg(noEmpty_rate)  noEmpty_rate
+      -- b.column_level,
+      case when b.emr_column_level is null then null else '1' end national_flag,
+      SUM (a.total_count) total_count,
+      SUM (a.noEmpty_count) noEmpty_count,
+      avg(a.noEmpty_rate)  noEmpty_rate
     FROM
       (
         select
@@ -158,21 +160,22 @@ SELECT
       and a.table_column = b.field_name
       and a.hospital_code = c.org_code
       and c.is_516 = '是'
-      AND sta_date >= '2026-05-25'
-      AND sta_date <= '2026-05-25'
-group by city, org_code,org_name, table_code,table_comment
+      AND a.sta_date >= '2026-06-10'
+      AND a.sta_date <= '2026-06-11'
+group by c.city, c.org_code, c.org_name,  a.table_code, b.table_comment,b.column_level,b.emr_column_level
     union all 
     SELECT
-    -- 'prov_notnull_table_detail' importTableCode,
-      city,
-      org_code,
-      org_name,
-      table_code,
-      table_comment,
+      c.city,
+      c.org_code,
+      c.org_name,
+      a.table_code,
+      b.table_comment,
       'update_3' as table_type,
-      SUM (total_count) total_count,
-      SUM (noEmpty_count) noEmpty_count,
-      avg(noEmpty_rate)  noEmpty_rate
+      -- b.column_level,
+      case when b.emr_column_level is null then null else '1' end national_flag,
+      SUM (a.total_count) total_count,
+      SUM (a.noEmpty_count) noEmpty_count,
+      avg(a.noEmpty_rate)  noEmpty_rate
     FROM
       (
         select
@@ -220,8 +223,8 @@ group by city, org_code,org_name, table_code,table_comment
       and a.table_column = b.field_name
       and a.hospital_code = c.org_code
       and c.is_516 = '是'
-      AND sta_date >= '2026-05-25'
-      AND sta_date <= '2026-05-25'
-group by city, org_code, org_name, table_code,table_comment) f 
+      AND sta_date >= '2026-06-10'
+      AND sta_date <= '2026-06-11'
+group by c.city, c.org_code, c.org_name,  a.table_code, b.table_comment,b.column_level,b.emr_column_level) f 
 order by city, org_code
 limit 50000;

@@ -37,10 +37,9 @@ a.org_code,
        from prov_association_detail a,prov_table_list b 
 where a.table_name = b.table_name 
 and b.national_flag ='1'
+and a.association_table_name in('pro_base_person_ylfw','pro_opt_diagnosisbreakdown,pro_ipt_diagnosisbreakdown')
 group by a.city, a.org_code, a.org_name
 order by a.city,a.org_code;
-
-select distinct table_name,a.association_table_name from prov_association_detail a ;
 
 -- 患者基本信息
 insert into prov_association_org

@@ -13,8 +13,8 @@ from tkcalendar import Calendar
 warnings.filterwarnings('ignore', message='pandas only supports SQLAlchemy')
 
 
-VERSION = "V1.0"
-BUILD_DATE = "2026-05-29"
+VERSION = "V1.3"
+BUILD_DATE = "2026-06-15"
 
 class ReportGeneratorTool:
     def __init__(self, root):
@@ -38,21 +38,29 @@ class ReportGeneratorTool:
         self.data_dir = None
         self.quality_date = tk.StringVar()
         self.quality_date.set("")  # 初始化为空
-        
+        self.national_flag_var = tk.StringVar(value="national")  # 默认国标
+
         self.create_main_interface()
         
     def create_main_interface(self):
         """创建主界面"""
         main_frame = ttk.Frame(self.root, padding="10")
         main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+              
+        # 国标/全部选择框
+        flag_frame = ttk.Frame(main_frame)
+        flag_frame.grid(row=0, column=0, sticky=tk.W, pady=5)
         
-        self.root.columnconfigure(0, weight=1)
-        self.root.rowconfigure(0, weight=1)
+        national_radio = ttk.Radiobutton(flag_frame, text="国标", variable=self.national_flag_var, value="national")
+        national_radio.pack(side=tk.LEFT, padx=5)
+        
+        all_radio = ttk.Radiobutton(flag_frame, text="全部", variable=self.national_flag_var, value="all")
+        all_radio.pack(side=tk.LEFT, padx=5)
         
         notebook = ttk.Notebook(main_frame)
-        notebook.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        notebook.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         main_frame.columnconfigure(0, weight=1)
-        main_frame.rowconfigure(0, weight=1)
+        main_frame.rowconfigure(1, weight=1)
         
         tab1 = ttk.Frame(notebook, padding="10")
         tab2 = ttk.Frame(notebook, padding="10")
@@ -102,7 +110,7 @@ class ReportGeneratorTool:
             self.db_info_text.insert(tk.END, f"✓ 数据库文件：{os.path.abspath(self.db_path)}\n")
             self.db_info_text.insert(tk.END, f"✓ 表数量：{result[0]}\n\n")
             
-            tables = conn.execute("SELECT table_name FROM information_schema.tables WHERE table_schema='main' ORDER BY table_name").fetchall()
+            tables = conn.execute("SELECT table_name FROM information_schema.tables order by table_name").fetchall()
             self.db_info_text.insert(tk.END, "数据库表列表:\n")
             for table in tables:
                 count = conn.execute(f"SELECT COUNT(*) FROM {table[0]}").fetchone()[0]
@@ -219,14 +227,19 @@ class ReportGeneratorTool:
         # 等待窗口关闭
         top.wait_window()
     
+    def get_base_name(self):
+        """根据国标/全部选择返回对应的基础文件名"""
+        flag = getattr(self, 'national_flag_var', None)
+        if flag and flag.get() == "all":
+            return "疾控下发汇总报告(省标表41张表)_质控日期："
+        else:
+            return "疾控下发汇总报告(省标对照国标)_质控日期："
+
     def update_export_filename(self):
         """更新导出文件名中的质控日期"""
         date_str = self.quality_date.get()
         if date_str and hasattr(self, 'export_name_var'):
-            # 获取当前文件名（不含日期部分）
-            current_name = self.export_name_var.get()
-            # 提取基础名称（去掉日期部分）
-            base_name = "疾控下发汇总报告(省标表)_质控日期："
+            base_name = self.get_base_name()
             new_name = f"{base_name}{date_str}.xlsx"
             self.export_name_var.set(new_name)
     
@@ -353,6 +366,14 @@ class ReportGeneratorTool:
                 with open(sql_file, 'r', encoding='utf-8') as f:
                     sql_content = f.read()
                 
+                # 根据选择动态修改SQL
+                if self.national_flag_var.get() == "all":
+                    # 选择"全部"时，移除所有 national_flag='1' 的条件
+                    sql_content = sql_content.replace("and a.national_flag = '1'", "")
+                    sql_content = sql_content.replace("and c.national_flag = '1'", "")
+                    sql_content = sql_content.replace("and b.national_flag = '1'", "")
+                    sql_content = sql_content.replace("and c.national_flag='1'", "")
+                
                 self.process_text.insert(tk.END, f"执行 SQL 脚本：{sql_file}\n\n")
                 
                 conn = duckdb.connect(self.db_path)
@@ -407,8 +428,8 @@ class ReportGeneratorTool:
                 
                 # 查询生成的汇总数据表 (包括 qzrj_city_summary)
                 result = conn.execute("""
-                    SELECT table_name FROM information_schema.tables WHERE table_schema='main' AND table_name
-in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realtime_org','prov_city_summary')
+                    SELECT table_name FROM information_schema.tables WHERE table_name
+in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realtime_org','prov_business_org','prov_city_summary')
                 """).fetchall()
                 
                 self.process_text.insert(tk.END, f"\n✓ 生成的汇总数据表:\n")
@@ -450,10 +471,15 @@ in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realt
         export_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=2)
         frame.columnconfigure(0, weight=1)
         
-        # 使用当前质控日期作为默认文件名
+        # 使用当前质控日期作为默认文件名，根据国标/全部选择动态设置
         default_date = datetime.now().strftime('%Y-%m-%d')
-        default_name = f"疾控中心数据质控报告_质控日期：{default_date}.xlsx"
+        default_base_name = self.get_base_name()
+        default_name = f"{default_base_name}{default_date}.xlsx"
         self.export_name_var = tk.StringVar(value=default_name)
+
+        # 绑定国标/全部切换时更新文件名
+        if hasattr(self, 'national_flag_var'):
+            self.national_flag_var.trace('w', lambda *args: self.update_export_filename())
         export_name_label = ttk.Label(export_frame, text="导出文件名:")
         export_name_label.grid(row=0, column=0, sticky=tk.W, pady=2)
         
@@ -550,6 +576,7 @@ in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realt
                     '条件必填字段完整性': self.get_column_level3_sql(),
                     '关联关系明细': self.get_association_sql(),
                     # '值域一致性': self.get_dict_sql(),
+                    '业务主键唯一率': self.get_business_sql(),
                     '主诉明细': self.get_chief_sql(),
                     '现病史明细': self.get_present_sql()
                 }
@@ -812,7 +839,13 @@ in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realt
         dialog.geometry(f"+{x}+{y}")
         
         dialog.wait_window()
-        
+
+    def get_national_condition(self):
+        """获取national_flag条件"""
+        if self.national_flag_var.get() == "national":
+            return "and c.national_flag='1'"
+        return ""
+            
     def get_city_state_sql(self):
         """
         地市州汇总 SQL
@@ -973,13 +1006,15 @@ order by a.city, a.org_code
         """
         时效性明细 SQL
         """
-        return """
+        condition = self.get_national_condition()
+        return f"""
         select a.city,
        a.org_code,
        a.org_name,
        b.table_name,
        b.table_comment,
        b.table_level,
+       c.timeliness_comment,
        b.total_records,
        b.compliance_records,
        case
@@ -987,10 +1022,11 @@ order by a.city, a.org_code
            when total_records = 0 then '-'
            else
                concat(round(b.compliance_rate*100,2), '%') end compliance_rate,
-       b.table_flag
+       c.quality_flag,
+       c.responsible_dept_codes
 from org_list a
          left join prov_timeliness_detail b on a.org_code = b.org_code
-         join prov_table_list c on b.table_name = c.table_name and c.national_flag='1'
+         join prov_table_list c on b.table_name = c.table_name {condition}
 where a.is_516_flag = '是'
 order by a.city, a.org_code;
         """
@@ -999,7 +1035,8 @@ order by a.city, a.org_code;
         """
         必填字段完整性 SQL
         """
-        return """
+        condition = self.get_national_condition()
+        return f"""
 select a.city,
        a.org_code,
        a.org_name,
@@ -1011,10 +1048,12 @@ select a.city,
            when total_records is null then null
            when total_records = 0 then '-'
            else
-               concat(round(b.notnull_rate*100,2), '%') end notnull_rate
+               concat(round(b.notnull_rate*100,2), '%') end notnull_rate,
+       c.quality_flag,
+       c.responsible_dept_codes
 from org_list a
          left join prov_column_level_1_detail b on a.org_code = b.org_code
-         join prov_table_list c on b.table_name = c.table_name and c.national_flag='1'
+         join prov_table_list c on b.table_name = c.table_name {condition}
 where a.is_516_flag = '是'
 order by a.city, a.org_code
         """
@@ -1023,7 +1062,8 @@ order by a.city, a.org_code
         """
         关键建议填字段完整性 SQL
         """
-        return """
+        condition = self.get_national_condition()
+        return f"""
         select a.city,
        a.org_code,
        a.org_name,
@@ -1035,10 +1075,12 @@ order by a.city, a.org_code
            when total_records is null then null
            when total_records = 0 then '-'
            else
-               concat(round(b.notnull_rate*100,2), '%') end notnull_rate
+               concat(round(b.notnull_rate*100,2), '%') end notnull_rate,
+       c.quality_flag,
+       c.responsible_dept_codes
 from org_list a
          left join prov_column_level_2_detail b on a.org_code = b.org_code
-         join prov_table_list c on b.table_name = c.table_name and c.national_flag='1'
+         join prov_table_list c on b.table_name = c.table_name {condition}
 where a.is_516_flag = '是'
 order by a.city, a.org_code
         """
@@ -1046,7 +1088,8 @@ order by a.city, a.org_code
         """
         条件必填字段完整性
         """
-        return """
+        condition = self.get_national_condition()
+        return f"""
         select a.city,
        a.org_code,
        a.org_name,
@@ -1058,10 +1101,12 @@ order by a.city, a.org_code
            when total_records is null then null
            when total_records = 0 then '-'
            else
-               concat(round(b.notnull_rate*100,2), '%') end notnull_rate
+               concat(round(b.notnull_rate*100,2), '%') end notnull_rate,
+       c.quality_flag,
+       c.responsible_dept_codes
 from org_list a
          left join prov_column_level_3_detail b on a.org_code = b.org_code
-         join prov_table_list c on b.table_name = c.table_name and c.national_flag='1'
+         join prov_table_list c on b.table_name = c.table_name {condition}
 where a.is_516_flag = '是'
 order by a.city, a.org_code
         """    
@@ -1070,7 +1115,8 @@ order by a.city, a.org_code
         """
         关联关系明细 SQL
         """
-        return """
+        condition = self.get_national_condition()
+        return f"""
         select a.city,a.org_code,a.org_name,
        b.table_name,
        c.table_comment table_comment,
@@ -1081,22 +1127,45 @@ order by a.city, a.org_code
        case when total_records = 0 then '-'
            else
                concat(round(b.association_rate*100,2),'%')
-           end association_rate
+           end association_rate,
+       c.quality_flag,
+       c.responsible_dept_codes
        from org_list a
     left join  prov_association_detail b on b.org_code = a.org_code
-    join prov_table_list c on b.table_name = c.table_name and c.national_flag='1'
+    join prov_table_list c on b.table_name = c.table_name {condition}
     left join prov_table_list d on b.association_table_name = d.table_name
 where a.is_516_flag ='是'
 order by a.city,a.org_code
         """
         
- 
+    def get_business_sql(self):
+        """
+        业务主键唯一率 SQL
+        """
+        return """
+        select a.city,a.org_code,a.org_name,
+       b.table_name,
+       c.table_comment table_comment,
+       b.total_records,
+       b.unique_records,
+       case when total_records = 0 then '-'
+           else
+               concat(round(b.unique_rate*100,2),'%')
+           end unique_rate,
+       c.responsible_dept_codes
+       from org_list a
+    left join prov_business_detail b on b.org_code = a.org_code
+         join prov_table_list c on b.table_name = c.table_name
+where a.is_516_flag ='是'
+order by a.city,a.org_code
+        """
         
     def get_chief_sql(self):
         """
         主诉明细 SQL
         """
-        return """
+        condition = self.get_national_condition()
+        return f"""
         select a.city,
        a.org_code,
        a.org_name,
@@ -1112,10 +1181,12 @@ order by a.city,a.org_code
            when b.total_records = 0 then '-'
            else
                concat(round(b.notnull_rate*100,2), '%')
-           end notnull_rate
+           end notnull_rate,
+       c.quality_flag,
+       c.responsible_dept_codes
 from org_list a
          left join prov_chief_detail b on b.org_code = a.org_code and b.field_name in('bzzs', 'chiefcomplaint', 'zs')
-         join prov_table_list c on c.table_name = b.table_name and c.national_flag='1'
+         join prov_table_list c on c.table_name = b.table_name {condition}
 where a.is_516_flag = '是'
 order by a.city, a.org_code
         """
@@ -1124,7 +1195,8 @@ order by a.city, a.org_code
         """
         现病史明细 SQL
         """
-        return """
+        condition = self.get_national_condition()
+        return f"""
         select a.city,
        a.org_code,
        a.org_name,
@@ -1140,14 +1212,15 @@ order by a.city, a.org_code
            when b.total_records = 0 then '-'
            else
                concat(round(b.notnull_rate*100,2), '%')
-           end notnull_rate
+           end notnull_rate,
+           c.quality_flag,
+           c.responsible_dept_codes
 from org_list a
          left join prov_chief_detail b on b.org_code = a.org_code and b.field_name in('bzxbs', 'xbs')
-         join prov_table_list c on b.table_name = c.table_name and c.national_flag='1'
+         join prov_table_list c on b.table_name = c.table_name {condition}
 where a.is_516_flag = '是'
 order by a.city, a.org_code;
         """
-
 
 def main():
     root = tk.Tk()

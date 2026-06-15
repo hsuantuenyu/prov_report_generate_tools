@@ -12,8 +12,7 @@ select b.city,
                round((sum(b.compliance_records) / sum(b.total_records)) * 100, 2)
            end                   compliance_rate
 from prov_timeliness_detail b,prov_table_list c 
-where b.table_name = c.table_name 
-and c.national_flag ='1'
+where b.table_name = c.table_name and c.national_flag = '1'
 group by b.city,
          b.org_code,
          b.org_name,
@@ -35,12 +34,10 @@ a.org_code,
            round((sum(a.association_records)/sum(a.total_records))*100,2)
        end association_rate
        from prov_association_detail a,prov_table_list b 
-where a.table_name = b.table_name 
-and b.national_flag ='1'
+where a.table_name = b.table_name and b.national_flag = '1'
+and a.association_table_name in('pro_base_person_ylfw','pro_opt_diagnosisbreakdown,pro_ipt_diagnosisbreakdown')
 group by a.city, a.org_code, a.org_name
 order by a.city,a.org_code;
-
-select distinct table_name,a.association_table_name from prov_association_detail a ;
 
 -- 患者基本信息
 insert into prov_association_org
@@ -53,8 +50,7 @@ select a.city,a.org_code,
            round((sum(a.association_records)/sum(a.total_records))*100,2)
        end association_rate
        from prov_association_detail a,prov_table_list b 
-where a.table_name = b.table_name 
-and b.national_flag ='1'
+where a.table_name = b.table_name and b.national_flag = '1'
 and a.association_table_name='pro_base_person_ylfw'
 group by a.city, a.org_code, a.org_name,a.association_table_name
 order by a.city,a.org_code;
@@ -70,8 +66,7 @@ select a.city,a.org_code,
            round((sum(a.association_records)/sum(a.total_records))*100,2)
        end association_rate
        from prov_association_detail a,prov_table_list b 
-where a.table_name = b.table_name 
-and b.national_flag ='1'
+where a.table_name = b.table_name and b.national_flag = '1'
 and a.association_table_name='pro_opt_diagnosisbreakdown,pro_ipt_diagnosisbreakdown'
 group by a.city, a.org_code, a.org_name,a.association_table_name
 order by a.city,a.org_code;
@@ -88,8 +83,7 @@ select a.city,
                        round((sum(a.notnull_records) / sum(a.total_records)) ,4)
                    end              notnull_rate
         from prov_chief_detail a,prov_table_list b 
-    where a.table_name = b.table_name 
-    and b.national_flag ='1'
+    where a.table_name = b.table_name and b.national_flag = '1'
     and a.field_name in ('bzzs', 'chiefcomplaint', 'zs')
         group by a.city, a.org_code, a.org_name
         order by a.city, a.org_code;
@@ -106,8 +100,7 @@ select a.city,
                        round((sum(a.notnull_records) / sum(a.total_records)) ,4)
                    end              notnull_rate
         from prov_chief_detail a,prov_table_list b 
-    where a.table_name = b.table_name 
-    and b.national_flag ='1'
+    where a.table_name = b.table_name and b.national_flag = '1'
     and  a.field_name in ('bzxbs', 'xbs')
         group by a.city, a.org_code, a.org_name
         order by a.city, a.org_code;       
@@ -127,8 +120,7 @@ select a.city,
            when sum(a.total_records) > 0 then
                round((sum(a.notnull_records) / sum(a.total_records)) * 100, 2) end notnull_rate
 from prov_column_level_1_detail a,prov_table_list b 
-    where a.table_name = b.table_name 
-    and b.national_flag ='1'
+    where a.table_name = b.table_name and a.national_flag = '1'
 group by a.city, a.org_code, a.org_name
 order by a.city, a.org_code;       
 
@@ -144,8 +136,7 @@ select a.city,
            when sum(a.total_records) > 0 then
                round((sum(a.notnull_records) / sum(a.total_records)) * 100, 2) end notnull_rate
 from prov_column_level_2_detail a,prov_table_list b 
-    where a.table_name = b.table_name 
-    and b.national_flag ='1'
+    where a.table_name = b.table_name and a.national_flag = '1'
 group by a.city, a.org_code, a.org_name
 order by a.city, a.org_code;  
 
@@ -161,8 +152,7 @@ select a.city,
            when sum(a.total_records) > 0 then
                round((sum(a.notnull_records) / sum(a.total_records)) * 100, 2) end notnull_rate
 from prov_column_level_3_detail a,prov_table_list b 
-    where a.table_name = b.table_name 
-    and b.national_flag ='1'
+    where a.table_name = b.table_name and a.national_flag = '1'
 group by a.city, a.org_code, a.org_name
 order by a.city, a.org_code;  
 
@@ -178,10 +168,26 @@ select a.city,
            when sum(a.total_records) > 0 then
                round((sum(a.notnull_records) / sum(a.total_records)) * 100, 2) end notnull_rate
 from prov_column_level_update_detail a,prov_table_list b 
-    where a.table_name = b.table_name 
-    and b.national_flag ='1'
+    where a.table_name = b.table_name and a.national_flag = '1'
 group by a.city, a.org_code, a.org_name,a.column_level
 order by a.city, a.org_code,a.column_level;  
+
+-- 业务主键唯一率机构汇总
+truncate table prov_business_org;
+insert into prov_business_org
+select a.city,
+       a.org_code,
+       a.org_name,
+       sum(a.total_records)                                                       total_records,
+       sum(a.unique_records)                                                      unique_records,
+       case
+           when sum(a.total_records) > 0 then
+               round((sum(a.unique_records) / sum(a.total_records)) * 100, 2) end unique_rate
+from prov_business_detail a,
+     prov_table_list b
+where a.table_name = b.table_name
+group by a.city, a.org_code, a.org_name
+order by a.city, a.org_code;
 
 -- 机构汇总结果生成
 truncate table prov_city_summary;

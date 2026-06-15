@@ -40,11 +40,11 @@ FROM
       cdc_sta_effec_result
   ) a
   INNER JOIN ods_tem_cdc_v211_org_code_new b on a.hospital_code = b.org_code and b.is_516 = '是'
-  INNER JOIN ods_tem_prov_table_list c on c.table_name = a.table_code and c.quality_flag ='1'
+  INNER JOIN ods_tem_prov_table_list c on c.table_name = a.table_code
 WHERE
   a.rn = 1
-  AND a.sta_date >= '2026-05-25'
-  AND a.sta_date <= '2026-05-25'
+  AND a.sta_date >= '2026-06-10'
+  AND a.sta_date < '2026-06-11'
 GROUP BY b.city,b.org_code,b.org_name,a.table_code,c.table_comment,c.table_level
   order by b.city,b.org_code 
 LIMIT 50000;

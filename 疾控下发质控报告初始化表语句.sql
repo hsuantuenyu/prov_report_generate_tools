@@ -1023,6 +1023,7 @@ org_name    VARCHAR,
 table_name  VARCHAR,
 table_comment   VARCHAR,
 column_level    VARCHAR,
+national_flag VARCHAR,
 total_records   HUGEINT,
 notnull_records HUGEINT,
 notnull_rate DOUBLE
@@ -1035,6 +1036,7 @@ COMMENT ON column prov_column_level_1_detail.org_name is '机构名称';
 COMMENT ON column prov_column_level_1_detail.table_name is '表名称';
 COMMENT ON column prov_column_level_1_detail.table_comment is '表注释';
 COMMENT ON column prov_column_level_1_detail.column_level is '列非空类别';
+COMMENT ON column prov_column_level_1_detail.national_flag is '国标标志';
 COMMENT ON column prov_column_level_1_detail.total_records is '纳入统计总数量';
 COMMENT ON column prov_column_level_1_detail.notnull_records is '非空数量';
 COMMENT ON column prov_column_level_1_detail.notnull_rate is '非空率';
@@ -1048,6 +1050,7 @@ org_name    VARCHAR,
 table_name  VARCHAR,
 table_comment   VARCHAR,
 column_level    VARCHAR,
+national_flag VARCHAR,
 total_records   HUGEINT,
 notnull_records HUGEINT,
 notnull_rate DOUBLE
@@ -1060,6 +1063,7 @@ COMMENT ON column prov_column_level_2_detail.org_name is '机构名称';
 COMMENT ON column prov_column_level_2_detail.table_name is '表名称';
 COMMENT ON column prov_column_level_2_detail.table_comment is '表注释';
 COMMENT ON column prov_column_level_2_detail.column_level is '列非空类别';
+COMMENT ON column prov_column_level_2_detail.national_flag is '国标标志';
 COMMENT ON column prov_column_level_2_detail.total_records is '纳入统计总数量';
 COMMENT ON column prov_column_level_2_detail.notnull_records is '非空数量';
 COMMENT ON column prov_column_level_2_detail.notnull_rate is '非空率';
@@ -1072,6 +1076,7 @@ org_name    VARCHAR,
 table_name  VARCHAR,
 table_comment   VARCHAR,
 column_level    VARCHAR,
+national_flag VARCHAR,
 total_records   HUGEINT,
 notnull_records HUGEINT,
 notnull_rate DOUBLE
@@ -1084,6 +1089,7 @@ COMMENT ON column prov_column_level_3_detail.org_name is '机构名称';
 COMMENT ON column prov_column_level_3_detail.table_name is '表名称';
 COMMENT ON column prov_column_level_3_detail.table_comment is '表注释';
 COMMENT ON column prov_column_level_3_detail.column_level is '列非空类别';
+COMMENT ON column prov_column_level_3_detail.national_flag is '国标标志';
 COMMENT ON column prov_column_level_3_detail.total_records is '纳入统计总数量';
 COMMENT ON column prov_column_level_3_detail.notnull_records is '非空数量';
 COMMENT ON column prov_column_level_3_detail.notnull_rate is '非空率';
@@ -1097,6 +1103,7 @@ org_name    VARCHAR,
 table_name  VARCHAR,
 table_comment   VARCHAR,
 column_level    VARCHAR,
+national_flag VARCHAR,
 total_records   HUGEINT,
 notnull_records HUGEINT,
 notnull_rate DOUBLE
@@ -1109,6 +1116,7 @@ COMMENT ON column prov_column_level_update_detail.org_name is '机构名称';
 COMMENT ON column prov_column_level_update_detail.table_name is '表名称';
 COMMENT ON column prov_column_level_update_detail.table_comment is '表注释';
 COMMENT ON column prov_column_level_update_detail.column_level is '列非空类别';
+COMMENT ON column prov_column_level_update_detail.national_flag is '国标标志';
 COMMENT ON column prov_column_level_update_detail.total_records is '纳入统计总数量';
 COMMENT ON column prov_column_level_update_detail.notnull_records is '非空数量';
 COMMENT ON column prov_column_level_update_detail.notnull_rate is '非空率';
@@ -1152,3 +1160,47 @@ h_notnull_records HUGEINT,
 i_total_records HUGEINT,
 i_notnull_records HUGEINT,
 association_org_cnt integer);
+
+drop table if exists prov_business_detail;
+create table if not exists prov_business_detail
+(
+ city varchar,
+ org_code integer,
+ org_name varchar,
+ table_name varchar,
+ table_comment varchar,
+ total_records HUGEINT,
+ unique_records HUGEINT,
+ unique_rate DOUBLE,
+ table_flag VARCHAR
+);
+
+comment on table prov_business_detail is '省标主键唯一率明细';
+comment on column prov_business_detail.city is '地市(州)';
+comment on column prov_business_detail.org_code is '机构编码';
+comment on column prov_business_detail.org_name is '机构名称';
+comment on column prov_business_detail.table_name is '表名称';
+comment on column prov_business_detail.table_comment is '表注释';
+comment on column prov_business_detail.total_records is '纳入统计总数量';
+comment on column prov_business_detail.unique_records is '唯一数量';
+comment on column prov_business_detail.unique_rate is '唯一率';
+comment on column prov_business_detail.table_flag is '优先级标志';
+
+drop table if exists prov_business_org;
+create table if not exists prov_business_org
+(
+ city varchar,
+ org_code integer,
+ org_name varchar,
+ total_records HUGEINT,
+ unique_records HUGEINT,
+ unique_rate DOUBLE
+);
+
+comment on table prov_business_org is '省标主键唯一率机构汇总';
+comment on column prov_business_org.city is '地市(州)';
+comment on column prov_business_org.org_code is '机构编码';
+comment on column prov_business_org.org_name is '机构名称';
+comment on column prov_business_org.total_records is '纳入统计总数量';
+comment on column prov_business_org.unique_records is '唯一数量';
+comment on column prov_business_org.unique_rate is '唯一率';

@@ -11,7 +11,7 @@ select
   '' association_table_comment,
   sum(b.main_count) total_records,
   sum(b.from_count) association_records,
-  case when sum(b.main_count) > 0 then (sum(b.from_count) / sum(b.main_count)) end association_rate 
+  case when sum(b.main_count) > 0 then (sum(b.from_count) / sum(b.main_count)) end association_rate
 from
   ods_tem_cdc_v211_org_code_new a,
   (
@@ -50,13 +50,13 @@ from
       ) a
     where
       a.rn = 1
-      and a.sta_date >= '2026-05-25'
-      and a.sta_date <= '2026-05-25'
+      and a.sta_date >= '2026-06-10'
+      and a.sta_date <= '2026-06-11'
     group by a.hospital_code, a.hospital_name, a.sta_date, a.main_table_code, a.from_table_code, a.main_count, a.from_count
   ) b,ods_tem_prov_table_list c 
  where a.org_code = b.hospital_code
  and a.is_516='是'
  and b.main_table_code = c.table_name
  group by a.city, a.org_code, a.org_name, b.main_table_code, c.table_comment, b.from_table_code, b.main_count, b.from_count
- order by a.city,a.org_code
+ order by a.city,a.org_code,table_name
  limit 50000

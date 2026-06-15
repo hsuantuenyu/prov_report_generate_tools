@@ -22,8 +22,8 @@ class ReportGeneratorTool:
         self.root.title(f"疾控中心下发报告生成辅助工具 {VERSION} ({BUILD_DATE})")
         
         # 设置窗口大小并居中
-        window_width = 620
-        window_height = 460
+        window_width = 680
+        window_height = 560
         screen_width = root.winfo_screenwidth()
         screen_height = root.winfo_screenheight()
         x = (screen_width - window_width) // 2
@@ -39,9 +39,25 @@ class ReportGeneratorTool:
         self.quality_date = tk.StringVar()
         self.quality_date.set("")  # 初始化为空
         self.national_flag_var = tk.StringVar(value="national")  # 默认国标
+        self.data_imported = False  # 是否已导入数据
+
+        # 绑定切换类别时的检查回调
+        self.national_flag_var.trace_add('write', self.on_flag_change)
 
         self.create_main_interface()
-        
+
+    def on_flag_change(self, *args):
+        """切换质控报告生成类别时的回调：已导入数据则强制切换到数据加工并提示"""
+        if self.data_imported:
+            flag_name = "全部" if self.national_flag_var.get() == "all" else "国标"
+            # 强制切换到"3. 数据加工"选项卡（索引为2）
+            if hasattr(self, 'notebook'):
+                self.notebook.select(2)
+            messagebox.showwarning(
+                "提示",
+                f"已切换为【{flag_name}】，需要重新执行数据加工操作。\n\n请点击【执行数据加工SQL】按钮。"
+            )
+
     def create_main_interface(self):
         """创建主界面"""
         main_frame = ttk.Frame(self.root, padding="10")
@@ -50,27 +66,30 @@ class ReportGeneratorTool:
         # 国标/全部选择框
         flag_frame = ttk.Frame(main_frame)
         flag_frame.grid(row=0, column=0, sticky=tk.W, pady=5)
-        
+
+        flag_label = ttk.Label(flag_frame, text="质控报告生成类别：", font=('微软雅黑', 10, 'bold'))
+        flag_label.pack(side=tk.LEFT, padx=5)
+
         national_radio = ttk.Radiobutton(flag_frame, text="国标", variable=self.national_flag_var, value="national")
         national_radio.pack(side=tk.LEFT, padx=5)
-        
+
         all_radio = ttk.Radiobutton(flag_frame, text="全部", variable=self.national_flag_var, value="all")
         all_radio.pack(side=tk.LEFT, padx=5)
         
-        notebook = ttk.Notebook(main_frame)
-        notebook.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        self.notebook = ttk.Notebook(main_frame)
+        self.notebook.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         main_frame.columnconfigure(0, weight=1)
         main_frame.rowconfigure(1, weight=1)
-        
-        tab1 = ttk.Frame(notebook, padding="10")
-        tab2 = ttk.Frame(notebook, padding="10")
-        tab3 = ttk.Frame(notebook, padding="10")
-        tab4 = ttk.Frame(notebook, padding="10")
-        
-        notebook.add(tab1, text="1. 数据库测试")
-        notebook.add(tab2, text="2. 数据导入")
-        notebook.add(tab3, text="3. 数据加工")
-        notebook.add(tab4, text="4. 数据导出")
+
+        tab1 = ttk.Frame(self.notebook, padding="10")
+        tab2 = ttk.Frame(self.notebook, padding="10")
+        tab3 = ttk.Frame(self.notebook, padding="10")
+        tab4 = ttk.Frame(self.notebook, padding="10")
+
+        self.notebook.add(tab1, text="1. 数据库测试")
+        self.notebook.add(tab2, text="2. 数据导入")
+        self.notebook.add(tab3, text="3. 数据加工")
+        self.notebook.add(tab4, text="4. 数据导出")
         
         self.create_db_test_tab(tab1)
         self.create_data_import_tab(tab2)
@@ -83,19 +102,29 @@ class ReportGeneratorTool:
         frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         parent.columnconfigure(0, weight=1)
         parent.rowconfigure(0, weight=1)
-        
+
         db_label = ttk.Label(frame, text=f"数据库文件：{self.db_path}")
         db_label.grid(row=0, column=0, sticky=tk.W, pady=2)
-        
+
         self.db_status_label = ttk.Label(frame, text="状态：未测试", foreground="orange")
         self.db_status_label.grid(row=1, column=0, sticky=tk.W, pady=2)
-        
+
         test_btn = ttk.Button(frame, text="测试数据库连接", command=self.test_database)
         test_btn.grid(row=2, column=0, pady=2)
-        
-        self.db_info_text = tk.Text(frame, height=15, width=80)
-        self.db_info_text.grid(row=3, column=0, pady=2, sticky=(tk.W, tk.E, tk.N, tk.S))
+
+        # 带滚动条的日志文本框，自适应剩余空间
+        text_frame = ttk.Frame(frame)
+        text_frame.grid(row=3, column=0, pady=(2, 10), sticky=(tk.W, tk.E, tk.N, tk.S))
         frame.columnconfigure(0, weight=1)
+        frame.rowconfigure(3, weight=1)
+
+        scrollbar = ttk.Scrollbar(text_frame)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        self.db_info_text = tk.Text(text_frame, yscrollcommand=scrollbar.set, wrap=tk.WORD)
+        self.db_info_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        scrollbar.config(command=self.db_info_text.yview)
         
     def test_database(self):
         """测试数据库连接"""
@@ -129,53 +158,60 @@ class ReportGeneratorTool:
         frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         parent.columnconfigure(0, weight=1)
         parent.rowconfigure(0, weight=1)
-        
+
         # 创建日期选择框架
         date_frame = ttk.Frame(frame)
         date_frame.grid(row=0, column=0, sticky=tk.W, pady=2)
-        
+
         date_label = ttk.Label(date_frame, text="质控日期:", font=('微软雅黑', 10, 'bold'))
         date_label.grid(row=0, column=0, padx=5)
-        
+
         # 设置初始日期为今天
         today = datetime.now().strftime('%Y-%m-%d')
         self.quality_date.set(today)
-        
+
         # 日期显示框（只读）
         date_entry = ttk.Entry(date_frame, textvariable=self.quality_date, width=15, font=('微软雅黑', 10), state='readonly')
         date_entry.grid(row=0, column=1, padx=5)
-        
+
         # 日历选择按钮
         calendar_btn = ttk.Button(date_frame, text="📅", width=3, command=lambda: self.popup_calendar())
         calendar_btn.grid(row=0, column=2, padx=2)
-        
+
         # 绑定鼠标点击事件，点击文本框也弹出日历
         date_entry.bind('<Button-1>', lambda e: self.popup_calendar())
-        
+
         select_btn = ttk.Button(frame, text="选择数据文件目录", command=self.select_data_directory)
         select_btn.grid(row=1, column=0, sticky=tk.W, pady=2)
-        
+
         self.dir_label = ttk.Label(frame, text="当前目录：未选择")
         self.dir_label.grid(row=2, column=0, sticky=tk.W, pady=2)
-        
-        
-        
+
         # 导入按钮框架（居中显示）
         btn_frame = ttk.Frame(frame)
         btn_frame.grid(row=3, column=0, pady=5)
         import_btn = ttk.Button(btn_frame, text="开始导入数据", command=self.import_data)
         import_btn.pack()
-        
+
         self.import_status_label = ttk.Label(frame, text="导入状态：未开始")
         self.import_status_label.grid(row=4, column=0, sticky=tk.W, pady=2)
-        
+
         self.import_progress = ttk.Progressbar(frame, mode='determinate')
         self.import_progress.grid(row=5, column=0, sticky=(tk.W, tk.E), pady=2)
-    
+
+        # 带滚动条的日志文本框，自适应剩余空间
+        text_frame = ttk.Frame(frame)
+        text_frame.grid(row=6, column=0, pady=(2, 10), sticky=(tk.W, tk.E, tk.N, tk.S))
         frame.columnconfigure(0, weight=1)
-        self.file_list_text = tk.Text(frame, height=10, width=80)
-        self.file_list_text.grid(row=6, column=0, pady=2, sticky=(tk.W, tk.E, tk.N, tk.S))
-        frame.columnconfigure(0, weight=1)
+        frame.rowconfigure(6, weight=1)
+
+        scrollbar = ttk.Scrollbar(text_frame)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        self.file_list_text = tk.Text(text_frame, yscrollcommand=scrollbar.set, wrap=tk.WORD)
+        self.file_list_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        scrollbar.config(command=self.file_list_text.yview)
         
     def popup_calendar(self):
         """弹出日历选择窗口"""
@@ -307,7 +343,8 @@ class ReportGeneratorTool:
                     
                 conn.commit()
                 conn.close()
-                
+
+                self.data_imported = True
                 self.import_status_label.config(text="导入状态：完成", foreground="green")
                 messagebox.showinfo("成功", f"成功导入 {total_files} 个数据表")
                 
@@ -336,7 +373,7 @@ class ReportGeneratorTool:
         
         # 创建带滚动条的文本框
         text_frame = ttk.Frame(frame)
-        text_frame.grid(row=3, column=0, pady=2, sticky=(tk.W, tk.E, tk.N, tk.S))
+        text_frame.grid(row=3, column=0, pady=(2, 10), sticky=(tk.W, tk.E, tk.N, tk.S))
         frame.columnconfigure(0, weight=1)
         frame.rowconfigure(3, weight=1)
         
@@ -345,7 +382,7 @@ class ReportGeneratorTool:
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
         # 文本框 (缩小高度)
-        self.process_text = tk.Text(text_frame, height=12, width=80, yscrollcommand=scrollbar.set)
+        self.process_text = tk.Text(text_frame, yscrollcommand=scrollbar.set, wrap=tk.WORD)
         self.process_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         
         # 绑定滚动条
@@ -516,7 +553,7 @@ in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realt
         
         # 创建带滚动条的文本框
         text_frame = ttk.Frame(frame)
-        text_frame.grid(row=5, column=0, pady=1, sticky=(tk.W, tk.E, tk.N, tk.S))
+        text_frame.grid(row=5, column=0, pady=(1, 10), sticky=(tk.W, tk.E, tk.N, tk.S))
         frame.columnconfigure(0, weight=1)
         frame.rowconfigure(5, weight=1)
         
@@ -525,7 +562,7 @@ in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realt
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
         # 文本框
-        self.export_text = tk.Text(text_frame, wrap=tk.WORD, yscrollcommand=scrollbar.set, height=15, width=80)
+        self.export_text = tk.Text(text_frame, wrap=tk.WORD, yscrollcommand=scrollbar.set)
         self.export_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         
         # 绑定滚动条

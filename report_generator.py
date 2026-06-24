@@ -13,8 +13,8 @@ from tkcalendar import Calendar
 warnings.filterwarnings('ignore', message='pandas only supports SQLAlchemy')
 
 
-VERSION = "V1.3"
-BUILD_DATE = "2026-06-15"
+VERSION = "V1.4"
+BUILD_DATE = "2026-06-24"
 
 class ReportGeneratorTool:
     def __init__(self, root):
@@ -1079,20 +1079,21 @@ select a.city,
        a.org_name,
        b.table_name,
        c.table_comment table_comment,
-       b.total_records,
-       b.notnull_records,
+       sum(b.total_records) as total_records,
+       sum(b.notnull_records) as notnull_records,
        case
-           when total_records is null then null
-           when total_records = 0 then '-'
+           when sum(b.total_records) is null then null
+           when sum(b.total_records) = 0 then '-'
            else
-               concat(round(b.notnull_rate*100,2), '%') end notnull_rate,
+               concat(round(sum(b.notnull_records)/sum(b.total_records)*100,2), '%') end notnull_rate,
        c.quality_flag,
        c.responsible_dept_codes
 from org_list a
          left join prov_column_level_1_detail b on a.org_code = b.org_code
          join prov_table_list c on b.table_name = c.table_name {condition}
 where a.is_516_flag = '是'
-order by a.city, a.org_code
+group by a.city, a.org_code,a.org_name, b.table_name, c.table_comment,c.quality_flag,c.responsible_dept_codes,c.table_seq
+order by a.city, a.org_code,c.table_seq
         """
         
     def get_column_level2_sql(self):
@@ -1106,24 +1107,25 @@ order by a.city, a.org_code
        a.org_name,
        b.table_name,
        c.table_comment table_comment,
-       b.total_records,
-       b.notnull_records,
+       sum(b.total_records) total_records,
+       sum(b.notnull_records) notnull_records,
        case
-           when total_records is null then null
-           when total_records = 0 then '-'
+           when sum(b.total_records) is null then null
+           when sum(b.total_records) = 0 then '-'
            else
-               concat(round(b.notnull_rate*100,2), '%') end notnull_rate,
+               concat(round(sum(b.notnull_records)/sum(b.total_records)*100,2), '%') end notnull_rate,
        c.quality_flag,
        c.responsible_dept_codes
 from org_list a
          left join prov_column_level_2_detail b on a.org_code = b.org_code
          join prov_table_list c on b.table_name = c.table_name {condition}
 where a.is_516_flag = '是'
-order by a.city, a.org_code
+group by a.city, a.org_code,a.org_name, b.table_name, c.table_comment,c.quality_flag,c.responsible_dept_codes,c.table_seq
+order by a.city, a.org_code,c.table_seq
         """
     def get_column_level3_sql(self):
         """
-        条件必填字段完整性
+        条件必填字段完整性 SQL
         """
         condition = self.get_national_condition()
         return f"""
@@ -1132,20 +1134,21 @@ order by a.city, a.org_code
        a.org_name,
        b.table_name,
        c.table_comment table_comment,
-       b.total_records,
-       b.notnull_records,
+       sum(b.total_records) total_records,
+       sum(b.notnull_records) notnull_records,
        case
-           when total_records is null then null
-           when total_records = 0 then '-'
+           when sum(b.total_records) is null then null
+           when sum(b.total_records) = 0 then '-'
            else
-               concat(round(b.notnull_rate*100,2), '%') end notnull_rate,
+               concat(round(sum(b.notnull_records)/sum(b.total_records)*100,2), '%') end notnull_rate,
        c.quality_flag,
        c.responsible_dept_codes
 from org_list a
          left join prov_column_level_3_detail b on a.org_code = b.org_code
          join prov_table_list c on b.table_name = c.table_name {condition}
 where a.is_516_flag = '是'
-order by a.city, a.org_code
+group by a.city, a.org_code,a.org_name, b.table_name, c.table_comment,c.quality_flag,c.responsible_dept_codes,c.table_seq
+order by a.city, a.org_code,c.table_seq
         """    
         
     def get_association_sql(self):

@@ -13,8 +13,8 @@ from tkcalendar import Calendar
 warnings.filterwarnings('ignore', message='pandas only supports SQLAlchemy')
 
 
-VERSION = "V1.4"
-BUILD_DATE = "2026-06-24"
+VERSION = "V1.5"
+BUILD_DATE = "2026-06-25"
 
 class ReportGeneratorTool:
     def __init__(self, root):
@@ -326,9 +326,26 @@ class ReportGeneratorTool:
                     
                     try:
                         df = pd.read_excel(file_path)
-                        
+
+                        # national_flag、column_level 转为字符串类型：
+                        # 数字值(1/1.0) → '1'，非数字字符串(如 update_1) → 保持原样，空值 → None(NULL)
+                        def to_str_flag(x):
+                            if pd.isna(x):
+                                return None
+                            x_str = str(x).strip()
+                            if x_str in ('', 'nan', 'None'):
+                                return None
+                            try:
+                                return str(int(float(x_str)))
+                            except (ValueError, TypeError):
+                                return x_str
+
+                        for col in ['national_flag','nation_flag', 'column_level']:
+                            if col in df.columns:
+                                df[col] = df[col].apply(to_str_flag)
+
                         conn.execute(f"DELETE FROM {table_name}")
-                        
+
                         insert_sql = f"INSERT INTO {table_name} SELECT * FROM df"
                         conn.execute(insert_sql)
                         
@@ -540,9 +557,15 @@ in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realt
         
         self.export_name_var.trace('w', update_path)
         
-        # 导出按钮
-        export_btn = ttk.Button(frame, text="开始导出报告", command=self.export_report)
-        export_btn.grid(row=2, column=0, pady=2)
+        # 导出按钮（两个按钮放在同一行，独立按钮框架）
+        btn_frame = ttk.Frame(frame)
+        btn_frame.grid(row=2, column=0, pady=5)
+
+        export_btn = ttk.Button(btn_frame, text="开始导出报告", command=self.export_report)
+        export_btn.pack(side=tk.LEFT, padx=5)
+
+        open_dir_btn = ttk.Button(btn_frame, text="打开质控报告目录", command=self.open_report_dir)
+        open_dir_btn.pack(side=tk.LEFT, padx=5)
         
         self.export_status_label = ttk.Label(frame, text="导出状态：未开始")
         self.export_status_label.grid(row=3, column=0, sticky=tk.W, pady=1)
@@ -584,6 +607,89 @@ in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realt
             self.template_path = file_path
             self.template_label.config(text=f"模板文件：{os.path.basename(file_path)}")
             
+    def open_report_dir(self):
+        """打开质控报告所在目录：已打开则切换过去，未打开则新建打开"""
+        # 获取导出文件所在目录
+        file_path = self.export_path_var.get()
+        if not file_path:
+            messagebox.showwarning("提示", "未设置导出文件路径")
+            return
+        directory = os.path.dirname(os.path.abspath(file_path))
+        if not os.path.isdir(directory):
+            # 目录不存在，尝试创建后再打开
+            try:
+                os.makedirs(directory, exist_ok=True)
+            except Exception as e:
+                messagebox.showerror("错误", f"目录不存在且无法创建：\n{directory}\n原因：{str(e)}")
+                return
+
+        # 在 Windows 上：先检查是否已有资源管理器窗口打开了该目录
+        # 如果已打开，将其置前；未打开则新建打开
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            SW_SHOW = 5
+            SW_RESTORE = 9
+            HWND_TOP = 0
+            SWP_NOMOVE = 0x0002
+            SWP_NOSIZE = 0x0001
+
+            user32 = ctypes.windll.user32
+            shell32 = ctypes.windll.shell32
+
+            found_hwnd = ctypes.c_void_p(0)
+            dir_normalized = os.path.normpath(directory).lower()
+
+            def enum_windows_proc(hwnd, _lparam):
+                # 只检查可见窗口
+                if not user32.IsWindowVisible(hwnd):
+                    return True
+                # 获取窗口类名（应为 "CabinetWClass" 或 "ExploreWClass" 等资源管理器类名）
+                class_name = ctypes.create_unicode_buffer(256)
+                user32.GetClassNameW(hwnd, class_name, 256)
+                if 'cabinet' not in class_name.value.lower() and 'explore' not in class_name.value.lower():
+                    return True
+                # 获取窗口标题（对资源管理器窗口，标题通常是文件夹名或路径）
+                title_length = user32.GetWindowTextLengthW(hwnd)
+                if title_length == 0:
+                    return True
+                title_buf = ctypes.create_unicode_buffer(title_length + 1)
+                user32.GetWindowTextW(hwnd, title_buf, title_length + 1)
+                window_title = title_buf.value.lower()
+                # 比较窗口标题或父目录名称是否匹配
+                folder_name = os.path.basename(dir_normalized).lower()
+                if window_title and (window_title == folder_name or dir_normalized in window_title):
+                    found_hwnd.value = hwnd
+                    return False  # 停止枚举
+                return True
+
+            enum_callback = ctypes.WINFUNCTYPE(
+                ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p
+            )(enum_windows_proc)
+            user32.EnumWindows(enum_callback, 0)
+
+            if found_hwnd.value:
+                # 已打开：将窗口置前并激活
+                if user32.IsIconic(found_hwnd.value):
+                    user32.ShowWindow(found_hwnd.value, SW_RESTORE)
+                user32.SetForegroundWindow(found_hwnd.value)
+                user32.BringWindowToTop(found_hwnd.value)
+            else:
+                # 未打开：新建打开
+                try:
+                    os.startfile(directory)
+                except Exception:
+                    import subprocess
+                    subprocess.Popen(['explorer', directory])
+        except Exception as e:
+            # 兜底方案：直接用资源管理器打开
+            try:
+                os.startfile(directory)
+            except Exception:
+                import subprocess
+                subprocess.Popen(['explorer', directory])
+
     def export_report(self):
         """导出报告"""
         if not self.template_path:

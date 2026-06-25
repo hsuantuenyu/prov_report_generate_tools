@@ -1,0 +1,5 @@
+版本号：V1.5
+更新日期：2026-06-25
+更新内容：
+1.更新doris查询结果《prov_column_level_2_detail.xlsx》《prov_column_level_3_detail.xlsx》模板列错误名称
+2.修复数据导入时个别列被强制识别为数值类型

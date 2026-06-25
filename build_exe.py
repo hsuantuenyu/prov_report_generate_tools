@@ -27,6 +27,7 @@ FILES_TO_COPY = [
     "prov_report.db",
     "prov_generate_data.sql",
     "疾控下发汇总报告模板.xlsx",
+    "版本日志.txt"
 ]
 
 

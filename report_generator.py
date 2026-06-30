@@ -13,8 +13,8 @@ from tkcalendar import Calendar
 warnings.filterwarnings('ignore', message='pandas only supports SQLAlchemy')
 
 
-VERSION = "V1.5"
-BUILD_DATE = "2026-06-25"
+VERSION = "V1.6"
+BUILD_DATE = "2026-06-30"
 
 class ReportGeneratorTool:
     def __init__(self, root):
@@ -1098,7 +1098,7 @@ order by city;
        case
            when g.total_records is null then null
            when g.total_records = 0 then '-'
-           else concat(f.notnull_rate, '%') end     notnull_rate,
+           else concat(g.notnull_rate, '%') end     notnull_rate,
        h.total_records,
        h.notnull_records,
        case
@@ -1110,7 +1110,7 @@ order by city;
        case
            when i.total_records is null then null
            when i.total_records = 0 then '-'
-           else concat(I.notnull_rate, '%') end     notnull_rate,
+           else concat(i.notnull_rate, '%') end     notnull_rate,
        j.total_records,
        j.association_records,
        case

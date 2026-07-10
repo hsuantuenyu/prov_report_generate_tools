@@ -22,8 +22,8 @@ class ReportGeneratorTool:
         self.root.title(f"疾控中心下发报告生成辅助工具 {VERSION} ({BUILD_DATE})")
         
         # 设置窗口大小并居中
-        window_width = 680
-        window_height = 560
+        window_width = 700
+        window_height = 700
         screen_width = root.winfo_screenwidth()
         screen_height = root.winfo_screenheight()
         x = (screen_width - window_width) // 2
@@ -31,6 +31,11 @@ class ReportGeneratorTool:
         self.root.geometry(f"{window_width}x{window_height}+{x}+{y}")
         
         self.root.resizable(False, False)
+
+        # 全局滚动条样式：加宽所有滚动条
+        style = ttk.Style()
+        style.configure("Vertical.TScrollbar", width=32, arrowsize=24)
+        style.configure("Horizontal.TScrollbar", width=32, arrowsize=24)
         
         self.db_path = "prov_report.db"
         self.template_path = None
@@ -614,6 +619,9 @@ in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realt
         search_entry = ttk.Entry(search_frame, textvariable=self.org_search_var, width=50)
         search_entry.pack(side=tk.LEFT, padx=5)
 
+        # 点击搜索框自动清空
+        search_entry.bind('<Button-1>', lambda e: self.org_search_var.set(''))
+
         search_btn = ttk.Button(search_frame, text="查询", command=self.refresh_org_tree)
         search_btn.pack(side=tk.LEFT, padx=5)
 
@@ -630,9 +638,12 @@ in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realt
         edit_btn = ttk.Button(btn_frame, text="编辑机构", command=self.edit_org)
         edit_btn.pack(side=tk.LEFT, padx=5)
 
+        delete_btn = ttk.Button(btn_frame, text="删除机构", command=self.delete_org)
+        delete_btn.pack(side=tk.LEFT, padx=5)
+
         # Treeview 展示区域
         tree_frame = ttk.Frame(frame)
-        tree_frame.grid(row=2, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=2)
+        tree_frame.grid(row=2, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(2, 5))
         frame.rowconfigure(2, weight=1)
         frame.columnconfigure(0, weight=1)
 
@@ -649,7 +660,7 @@ in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realt
                                       show='headings', yscrollcommand=v_scrollbar.set, xscrollcommand=h_scrollbar.set)
 
         # 设置列标题和宽度
-        self.org_tree.heading('city', text='城市')
+        self.org_tree.heading('city', text='地市(州)')
         self.org_tree.heading('区县', text='区县')
         self.org_tree.heading('org_code', text='机构代码')
         self.org_tree.heading('org_name', text='机构名称')
@@ -814,6 +825,9 @@ in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realt
         # 下拉选项字段
         DROPDOWN_FIELDS = ['is_412名单', 'is_516_flag', '是否分院区', '是否基层', '是否26', '是否满足实时要求', '是否主院区']
 
+        # 注册数字输入校验函数
+        validate_num_cmd = top.register(lambda P: P.isdigit() or P == '')
+
         for col_name in columns:
             display_name = FIELD_LABEL_MAP.get(col_name, col_name)
             is_required = col_name in REQUIRED_FIELDS
@@ -836,6 +850,17 @@ in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realt
                 # 非必填的下拉框允许选择空值来清空
                 combo_values = ("是", "否") if is_required else ("", "是", "否")
                 entry = ttk.Combobox(scrollable_frame, textvariable=var, values=combo_values, state="readonly", width=38)
+            elif col_name == 'city':
+                # 地市(州)下拉选项
+                city_values = (
+                    "鄂州市", "恩施州", "黄冈市", "黄石市", "荆门市", "荆州市",
+                    "潜江市", "神农架林区", "省本级", "十堰市", "随州市", "天门市",
+                    "武汉市", "仙桃市", "咸宁市", "襄阳市", "孝感市", "宜昌市"
+                )
+                entry = ttk.Combobox(scrollable_frame, textvariable=var, values=city_values, width=38)
+            elif col_name == 'org_code':
+                # 机构编码仅允许输入数字
+                entry = ttk.Entry(scrollable_frame, textvariable=var, width=40, validate='key', validatecommand=(validate_num_cmd, '%P'))
             else:
                 entry = ttk.Entry(scrollable_frame, textvariable=var, width=40)
             entry.grid(row=row_idx, column=1, sticky=(tk.W, tk.E), padx=5, pady=2)

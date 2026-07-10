@@ -98,7 +98,7 @@ select a.city,
        case
            when g.total_records is null then null
            when g.total_records = 0 then '-'
-           else concat(f.notnull_rate, '%') end     notnull_rate,
+           else concat(g.notnull_rate, '%') end     notnull_rate,
        h.total_records,
        h.notnull_records,
        case

@@ -12,7 +12,7 @@ select b.city,
                round((sum(b.compliance_records) / sum(b.total_records)) * 100, 2)
            end                   compliance_rate
 from prov_timeliness_detail b,prov_table_list c 
-where b.table_name = c.table_name and c.national_flag = '1'
+where b.table_name = c.table_name and b.table_name not in('pro_dic_department','pro_dic_practitioner') and c.national_flag = '1'
 group by b.city,
          b.org_code,
          b.org_name,

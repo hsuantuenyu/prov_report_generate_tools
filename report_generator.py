@@ -14,7 +14,7 @@ warnings.filterwarnings('ignore', message='pandas only supports SQLAlchemy')
 
 
 VERSION = "V1.7"
-BUILD_DATE = "2026-07-10"
+BUILD_DATE = "2026-07-15"
 
 class ReportGeneratorTool:
     def __init__(self, root):

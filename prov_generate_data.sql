@@ -170,7 +170,23 @@ select a.city,
 from prov_column_level_update_detail a,prov_table_list b 
     where a.table_name = b.table_name and a.national_flag = '1'
 group by a.city, a.org_code, a.org_name,a.column_level
-order by a.city, a.org_code,a.column_level;  
+order by a.city, a.org_code,a.column_level;
+
+insert into prov_column_level_org
+select a.city,
+       a.org_code,
+       a.org_name,
+       concat('version_2_column_level_',a.column_level) as column_level,
+       sum(a.total_records)                                                        total_records,
+       sum(a.notnull_records)                                                      notnull_records,
+       case
+           when sum(a.total_records) > 0 then
+               round((sum(a.notnull_records) / sum(a.total_records)) * 100, 2) end notnull_rate
+from prov_update_version_2_detail a,prov_table_list b
+    where a.table_name = b.table_name and a.national_flag = '1'
+group by a.city, a.org_code, a.org_name,a.column_level
+order by a.city, a.org_code,a.column_level;
+
 
 -- 业务主键唯一率机构汇总
 truncate table prov_business_org;
@@ -208,7 +224,11 @@ select a.city,
        sum(h.notnull_records) h_notnull_records,
        sum(i.total_records) i_total_records,
        sum(i.notnull_records) i_notnull_records,
-       sum(case when j.association_rate >=100 then 1 else 0 end) association_org_cnt
+       sum(j.total_records) j_total_records,
+       sum(j.notnull_records) j_notnull_records,
+       sum(k.total_records) k_total_records,
+       sum(k.notnull_records) k_notnull_records,
+       sum(case when m.association_rate >=100 then 1 else 0 end) association_org_cnt
 from org_list a
  left join prov_timeliness_org b on b.org_code = a.org_code and b.table_level = '1'
          left join prov_timeliness_org c on c.org_code = a.org_code and c.table_level = '2'
@@ -218,6 +238,8 @@ from org_list a
          left join prov_column_level_org g on g.org_code = a.org_code and g.column_level = '3'
          left join prov_column_level_org h on h.org_code = a.org_code and h.column_level = 'update_1'
          left join prov_column_level_org i on i.org_code = a.org_code and i.column_level = 'update_3'
-         left join prov_association_org j on j.org_code = a.org_code and j.association_table = 'all'
+         left join prov_column_level_org j on j.org_code = a.org_code and j.column_level = 'version_2_column_level_1'
+     left join prov_column_level_org k on k.org_code = a.org_code and k.column_level = 'version_2_column_level_3'
+         left join prov_association_org m on m.org_code = a.org_code and m.association_table = 'all'
    where a.is_516_flag = '是'
 group by a.city;

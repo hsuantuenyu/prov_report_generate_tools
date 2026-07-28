@@ -1,2 +1,10 @@
 /build
 /__pycache__
+dist/疾控中心下发报告生成工具.rar
+dist/疾控中心下发报告生成工具.exe
+.idea/.gitignore
+.idea/modules.xml
+.idea/prov_report_generate_tools.iml
+.idea/vcs.xml
+.idea/inspectionProfiles/profiles_settings.xml
+dist/疾控中心下发报告生成工具.exe

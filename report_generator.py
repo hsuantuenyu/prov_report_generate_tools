@@ -13,8 +13,8 @@ from tkcalendar import Calendar
 warnings.filterwarnings('ignore', message='pandas only supports SQLAlchemy')
 
 
-VERSION = "V1.7"
-BUILD_DATE = "2026-07-15"
+VERSION = "V1.8"
+BUILD_DATE = "2026-07-28"
 
 class ReportGeneratorTool:
     def __init__(self, root):
@@ -41,9 +41,12 @@ class ReportGeneratorTool:
         self.template_path = None
         self.export_path = None
         self.data_dir = None
-        self.quality_date = tk.StringVar()
-        self.quality_date.set("")  # 初始化为空
+        self.start_date = tk.StringVar()
+        self.start_date.set("")  # 初始化为空
+        self.end_date = tk.StringVar()
+        self.end_date.set("")  # 初始化为空
         self.national_flag_var = tk.StringVar(value="national")  # 默认国标
+        self.date_range_mode = tk.StringVar(value="single")  # 默认单日
         self.data_imported = False  # 是否已导入数据
 
         # 绑定切换类别时的检查回调
@@ -62,6 +65,16 @@ class ReportGeneratorTool:
                 "提示",
                 f"已切换为【{flag_name}】，需要重新执行数据加工操作。\n\n请点击【执行数据加工SQL】按钮。"
             )
+
+    def on_date_range_change(self, *args):
+        """切换日期区间模式时的回调：控制结束日期的显示/隐藏"""
+        if not hasattr(self, 'end_date_frame'):
+            return
+        if self.date_range_mode.get() == "single":
+            self.end_date_frame.grid_remove()
+        else:
+            self.end_date_frame.grid()
+        self.update_export_filename()
 
     def create_main_interface(self):
         """创建主界面"""
@@ -172,23 +185,59 @@ class ReportGeneratorTool:
         date_frame = ttk.Frame(frame)
         date_frame.grid(row=0, column=0, sticky=tk.W, pady=2)
 
-        date_label = ttk.Label(date_frame, text="质控日期:", font=('微软雅黑', 10, 'bold'))
-        date_label.grid(row=0, column=0, padx=5)
+        # 数据区间选择
+        range_frame = ttk.Frame(date_frame)
+        range_frame.grid(row=0, column=0, sticky=tk.W, pady=(0, 5))
+        
+        range_label = ttk.Label(range_frame, text="数据区间:", font=('微软雅黑', 10, 'bold'))
+        range_label.pack(side=tk.LEFT, padx=5)
+        
+        single_radio = ttk.Radiobutton(range_frame, text="单日", variable=self.date_range_mode, value="single")
+        single_radio.pack(side=tk.LEFT, padx=5)
+        
+        range_radio = ttk.Radiobutton(range_frame, text="区间", variable=self.date_range_mode, value="range")
+        range_radio.pack(side=tk.LEFT, padx=5)
+
+        # 日期输入框架
+        input_frame = ttk.Frame(date_frame)
+        input_frame.grid(row=1, column=0, sticky=tk.W)
 
         # 设置初始日期为今天
         today = datetime.now().strftime('%Y-%m-%d')
-        self.quality_date.set(today)
+        self.start_date.set(today)
+        self.end_date.set(today)
 
-        # 日期显示框（只读）
-        date_entry = ttk.Entry(date_frame, textvariable=self.quality_date, width=15, font=('微软雅黑', 10), state='readonly')
-        date_entry.grid(row=0, column=1, padx=5)
+        # 开始日期
+        start_label = ttk.Label(input_frame, text="开始日期:", font=('微软雅黑', 10, 'bold'))
+        start_label.grid(row=0, column=0, padx=5)
 
-        # 日历选择按钮
-        calendar_btn = ttk.Button(date_frame, text="📅", width=3, command=lambda: self.popup_calendar())
-        calendar_btn.grid(row=0, column=2, padx=2)
+        start_date_entry = ttk.Entry(input_frame, textvariable=self.start_date, width=12, font=('微软雅黑', 10), state='readonly')
+        start_date_entry.grid(row=0, column=1, padx=5)
 
-        # 绑定鼠标点击事件，点击文本框也弹出日历
-        date_entry.bind('<Button-1>', lambda e: self.popup_calendar())
+        start_calendar_btn = ttk.Button(input_frame, text="📅", width=3, command=lambda: self.popup_calendar('start'))
+        start_calendar_btn.grid(row=0, column=2, padx=2)
+
+        start_date_entry.bind('<Button-1>', lambda e: self.popup_calendar('start'))
+
+        # 结束日期（放在独立frame中以便显示/隐藏）
+        self.end_date_frame = ttk.Frame(input_frame)
+        self.end_date_frame.grid(row=0, column=3, padx=5)
+
+        end_label = ttk.Label(self.end_date_frame, text="结束日期:", font=('微软雅黑', 10, 'bold'))
+        end_label.pack(side=tk.LEFT, padx=5)
+
+        end_date_entry = ttk.Entry(self.end_date_frame, textvariable=self.end_date, width=12, font=('微软雅黑', 10), state='readonly')
+        end_date_entry.pack(side=tk.LEFT, padx=5)
+
+        end_calendar_btn = ttk.Button(self.end_date_frame, text="📅", width=3, command=lambda: self.popup_calendar('end'))
+        end_calendar_btn.pack(side=tk.LEFT, padx=2)
+
+        end_date_entry.bind('<Button-1>', lambda e: self.popup_calendar('end'))
+        
+        # 绑定日期区间模式变化
+        self.date_range_mode.trace_add('write', self.on_date_range_change)
+        # 初始状态
+        self.on_date_range_change()
 
         select_btn = ttk.Button(frame, text="选择数据文件目录", command=self.select_data_directory)
         select_btn.grid(row=1, column=0, sticky=tk.W, pady=2)
@@ -222,53 +271,56 @@ class ReportGeneratorTool:
 
         scrollbar.config(command=self.file_list_text.yview)
         
-    def popup_calendar(self):
+    def popup_calendar(self, date_type='start'):
         """弹出日历选择窗口"""
         # 创建顶级窗口
         top = tk.Toplevel(self.root)
         top.title("选择日期")
         top.resizable(False, False)
-        
+
         # 设置窗口始终在最前
         top.attributes('-topmost', True)
-        
+
         # 获取按钮位置，设置窗口在按钮右侧
         x = self.root.winfo_x() + 280  # 主窗口 X 坐标 + 按钮位置
         y = self.root.winfo_y() + 100  # 主窗口 Y 坐标 + 偏移量
         top.geometry(f"+{x}+{y}")
-        
+
         # 创建 Calendar 控件
         cal = Calendar(top, selectmode='day', date_pattern='yyyy-mm-dd')
         cal.pack(padx=10, pady=10)
-        
+
         # 设置当前选中的日期
-        current_date = self.quality_date.get()
+        current_date = self.start_date.get() if date_type == 'start' else self.end_date.get()
         if current_date:
             cal.selection_set(current_date)
-        
+
         # 确认选择函数
         def on_confirm():
             selected_date = cal.get_date()
-            self.quality_date.set(selected_date)
+            if date_type == 'start':
+                self.start_date.set(selected_date)
+            else:
+                self.end_date.set(selected_date)
             self.update_export_filename()
             top.destroy()
-        
+
         # 取消选择函数
         def on_cancel():
             top.destroy()
-        
+
         # 创建按钮框架
         btn_frame = ttk.Frame(top)
         btn_frame.pack(pady=5)
-        
+
         # 确认按钮
         confirm_btn = ttk.Button(btn_frame, text="确定", command=on_confirm)
         confirm_btn.pack(side=tk.LEFT, padx=5)
-        
+
         # 取消按钮
         cancel_btn = ttk.Button(btn_frame, text="取消", command=on_cancel)
         cancel_btn.pack(side=tk.LEFT, padx=5)
-        
+
         # 等待窗口关闭
         top.wait_window()
     
@@ -282,10 +334,14 @@ class ReportGeneratorTool:
 
     def update_export_filename(self):
         """更新导出文件名中的质控日期"""
-        date_str = self.quality_date.get()
-        if date_str and hasattr(self, 'export_name_var'):
+        start_date_str = self.start_date.get()
+        end_date_str = self.end_date.get()
+        if start_date_str and hasattr(self, 'export_name_var'):
             base_name = self.get_base_name()
-            new_name = f"{base_name}{date_str}.xlsx"
+            if self.date_range_mode.get() == "single" or start_date_str == end_date_str:
+                new_name = f"{base_name}{start_date_str}.xlsx"
+            else:
+                new_name = f"{base_name}{start_date_str}至{end_date_str}.xlsx"
             self.export_name_var.set(new_name)
     
     def select_data_directory(self):
@@ -536,6 +592,8 @@ in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realt
         
         # 使用当前质控日期作为默认文件名，根据国标/全部选择动态设置
         default_date = datetime.now().strftime('%Y-%m-%d')
+        self.start_date.set(default_date)
+        self.end_date.set(default_date)
         default_base_name = self.get_base_name()
         default_name = f"{default_base_name}{default_date}.xlsx"
         self.export_name_var = tk.StringVar(value=default_name)
@@ -1094,6 +1152,7 @@ in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realt
                     '必填字段完整性': self.get_column_level1_sql(),
                     '重要建议填字段完整性': self.get_column_level2_sql(),
                     '条件必填字段完整性': self.get_column_level3_sql(),
+                    '第二批次更新字段明细':self.get_column_version_2_sql(),
                     '关联关系明细': self.get_association_sql(),
                     # '值域一致性': self.get_dict_sql(),
                     '业务主键唯一率': self.get_business_sql(),
@@ -1399,6 +1458,14 @@ in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realt
        i_notnull_records,
        case when i_total_records >0 then 
        concat(round((i_notnull_records / i_total_records) * 100, 2), '%') end as i_notnull_rate,
+       j_total_records,
+       j_notnull_records,
+       case when j_total_records >0 then 
+       concat(round((j_notnull_records / j_total_records) * 100, 2), '%') end as j_notnull_rate,
+       k_total_records,
+       k_notnull_records,
+       case when k_total_records >0 then 
+       concat(round((k_notnull_records / k_total_records) * 100, 2), '%') end as k_notnull_rate,
        association_org_cnt,
        concat(round((association_org_cnt / org_cnt) * 100, 2), '%')       as association__rate
 from prov_city_summary a
@@ -1425,11 +1492,17 @@ select 'Total'                                                                  
        concat(round((sum(h_notnull_records) / sum(h_total_records)) * 100, 2), '%') as h_notnull_rate,
        sum(i_total_records)                                                            i_total_records,
        sum(i_notnull_records)                                                          i_notnull_records,
-       concat(round((sum(i_notnull_records) / sum(i_total_records)) * 100, 2), '%')  i_not_notnull_rate,
+       concat(round((sum(i_notnull_records) / sum(i_total_records)) * 100, 2), '%')    i_not_notnull_rate,
+       sum(j_total_records)                                                            j_total_records,
+       sum(j_notnull_records)                                                          j_notnull_records,
+       concat(round((sum(j_notnull_records) / sum(j_total_records)) * 100, 2), '%')    j_not_notnull_rate,
+       sum(k_total_records)                                                            k_total_records,
+       sum(k_notnull_records)                                                          k_notnull_records,
+       concat(round((sum(k_notnull_records) / sum(k_total_records)) * 100, 2), '%')    k_not_notnull_rate,
        sum(association_org_cnt)                                                        association_org_cnt,
        concat(round((sum(association_org_cnt) / sum(org_cnt)) * 100, 2), '%')       as association__rate
 from prov_city_summary
-order by city;
+order by city
         """
         
     def get_org_summary_sql(self):
@@ -1489,23 +1562,35 @@ order by city;
            when i.total_records = 0 then '-'
            else concat(i.notnull_rate, '%') end     notnull_rate,
        j.total_records,
-       j.association_records,
+       j.notnull_records,
        case
            when j.total_records is null then null
            when j.total_records = 0 then '-'
-           else concat(j.association_rate, '%') end association_rate,
+           else concat(j.notnull_rate, '%') end     notnull_rate,   
        k.total_records,
-       k.association_records,
+       k.notnull_records,
        case
-           when k.total_records is null then null
-           when k.total_records = 0 then '-'
-           else concat(k.association_rate, '%') end association_rate,
+              when k.total_records is null then null
+              when k.total_records = 0 then '-'
+              else concat(k.notnull_rate, '%') end     notnull_rate,
        l.total_records,
        l.association_records,
        case
-           when l.total_records is null then null
-           when l.total_records = 0 then '-'
-           else concat(l.association_rate, '%') end association_rate
+            when l.total_records is null then null
+            when l.total_records = 0 then '-'
+            else concat(l.association_rate, '%') end association_rate,
+       m.total_records,
+       m.association_records,
+       case
+           when m.total_records is null then null
+           when m.total_records = 0 then '-'
+           else concat(m.association_rate, '%') end association_rate,
+       n.total_records,
+       n.association_records,
+       case
+           when n.total_records is null then null
+           when n.total_records = 0 then '-'
+           else concat(n.association_rate, '%') end association_rate
 from org_list a
          left join prov_timeliness_org b on b.org_code = a.org_code and b.table_level = '1'
          left join prov_timeliness_org c on c.org_code = a.org_code and c.table_level = '2'
@@ -1515,9 +1600,11 @@ from org_list a
          left join prov_column_level_org g on g.org_code = a.org_code and g.column_level = '3'
          left join prov_column_level_org h on h.org_code = a.org_code and h.column_level = 'update_1'
          left join prov_column_level_org i on i.org_code = a.org_code and i.column_level = 'update_3'
-         left join prov_association_org j on j.org_code = a.org_code and j.association_table = 'pro_base_person_ylfw'
-         left join prov_association_org k on k.org_code = a.org_code and k.association_table = 'pro_opt_diagnosisbreakdown,pro_ipt_diagnosisbreakdown'
-         left join prov_association_org l on l.org_code = a.org_code and l.association_table = 'all'
+         left join prov_column_level_org j on j.org_code = a.org_code and j.column_level = 'version_2_column_level__1'
+         left join prov_column_level_org k on k.org_code = a.org_code and k.column_level = 'version_2_column_level__3'
+         left join prov_association_org l on l.org_code = a.org_code and l.association_table = 'pro_base_person_ylfw'
+         left join prov_association_org m on m.org_code = a.org_code and m.association_table = 'pro_opt_diagnosisbreakdown,pro_ipt_diagnosisbreakdown'
+         left join prov_association_org n on n.org_code = a.org_code and n.association_table = 'all'
 where a.is_516_flag = '是'
 order by a.city, a.org_code
         """
@@ -1632,7 +1719,35 @@ from org_list a
 where a.is_516_flag = '是'
 group by a.city, a.org_code,a.org_name, b.table_name, c.table_comment,c.quality_flag,c.responsible_dept_codes,c.table_seq
 order by a.city, a.org_code,c.table_seq
-        """    
+        """
+
+    def get_column_version_2_sql(self):
+        """
+           关联关系明细 SQL
+           """
+        condition = self.get_national_condition()
+        return f"""
+                select a.city,
+       a.org_code,
+       a.org_name,
+       b.table_name,
+       c.table_comment table_comment,
+       sum(b.total_records) total_records,
+       sum(b.notnull_records) notnull_records,
+       case
+           when sum(b.total_records) is null then null
+           when sum(b.total_records) = 0 then '-'
+           else
+               concat(round(sum(b.notnull_records)/sum(b.total_records)*100,2), '%') end notnull_rate,
+       c.quality_flag,
+       c.responsible_dept_codes
+from org_list a
+         left join prov_update_version_2_detail b on a.org_code = b.org_code
+         join prov_table_list c on b.table_name = c.table_name {condition}
+where a.is_516_flag = '是'
+group by a.city, a.org_code,a.org_name, b.table_name, c.table_comment,c.quality_flag,c.responsible_dept_codes,c.table_seq
+order by a.city, a.org_code,c.table_seq
+                """
         
     def get_association_sql(self):
         """

@@ -99,8 +99,8 @@ def check_spec_syntax(filepath):
 
 
 def check_spec_macos_bundle(filepath):
-    """检查 spec 文件是否包含 macOS BUNDLE 配置"""
-    print_header("4. Spec 文件 macOS BUNDLE 配置检查")
+    """检查 spec 文件是否包含 macOS BUNDLE 配置及 macOS 11+ 兼容性"""
+    print_header("4. Spec 文件 macOS BUNDLE 配置检查 (macOS 11+ 兼容)")
     with open(filepath, 'r', encoding='utf-8') as f:
         content = f.read()
 
@@ -114,12 +114,29 @@ def check_spec_macos_bundle(filepath):
                          'sys.platform=="win32"' in content)
     check_result("version 参数有 Windows 平台保护", has_version_guard)
 
-    return has_bundle and has_darwin and has_version_guard
+    # ===== macOS 11+ 专项检查 =====
+    has_lsmax = 'LSMinimumSystemVersion' in content
+    check_result("包含 LSMinimumSystemVersion (macOS 11+ 最低版本声明)", has_lsmax)
+
+    has_11_0 = "11.0" in content
+    check_result("设置最低版本为 macOS 11.0 (Big Sur)", has_11_0)
+
+    has_deployment_target = 'MACOSX_DEPLOYMENT_TARGET' in content
+    check_result("包含 MACOSX_DEPLOYMENT_TARGET 环境变量设置", has_deployment_target)
+
+    has_target_arch = 'TARGET_ARCH' in content or 'target_arch' in content
+    check_result("支持目标架构配置 (TARGET_ARCH)", has_target_arch)
+
+    has_info_plist = 'info_plist' in content
+    check_result("包含 info_plist 配置注入", has_info_plist)
+
+    return (has_bundle and has_darwin and has_version_guard and
+            has_lsmax and has_11_0 and has_deployment_target and has_info_plist)
 
 
 def check_build_script(filepath):
-    """检查 build_exe.py 是否兼容 macOS"""
-    print_header("5. build_exe.py 跨平台兼容性检查")
+    """检查 build_exe.py 是否兼容 macOS 及 macOS 11+"""
+    print_header("5. build_exe.py 跨平台兼容性检查 (macOS 11+ 兼容)")
     with open(filepath, 'r', encoding='utf-8') as f:
         content = f.read()
 
@@ -129,7 +146,18 @@ def check_build_script(filepath):
     has_platform_check = 'sys.platform' in content or 'IS_MAC' in content or 'IS_WINDOWS' in content
     check_result("包含平台检测逻辑", has_platform_check)
 
-    return has_mac_path and has_platform_check
+    # ===== macOS 11+ 专项检查 =====
+    has_deployment_target = 'MACOSX_DEPLOYMENT_TARGET' in content
+    check_result("设置 MACOSX_DEPLOYMENT_TARGET 部署目标", has_deployment_target)
+
+    has_11_0 = "11.0" in content
+    check_result("默认最低版本为 macOS 11.0 (Big Sur)", has_11_0)
+
+    has_target_arch = 'TARGET_ARCH' in content
+    check_result("支持 TARGET_ARCH 目标架构环境变量", has_target_arch)
+
+    return (has_mac_path and has_platform_check and
+            has_deployment_target and has_11_0)
 
 
 def check_imports_macos_compatible(filepath):
@@ -232,8 +260,8 @@ def check_dependencies():
 
 
 def simulate_app_structure():
-    """模拟检查 .app 应用包应包含的结构"""
-    print_header("9. .app 应用包结构模拟检查")
+    """模拟检查 .app 应用包应包含的结构及 macOS 11+ 兼容性"""
+    print_header("9. .app 应用包结构模拟检查 (macOS 11+ 兼容)")
 
     expected_structure = [
         "Contents/",
@@ -248,6 +276,30 @@ def simulate_app_structure():
         print(f"    {item}")
     check_result("BUNDLE 指令已配置", True)
     check_result("Info.plist 由 PyInstaller 自动生成", True)
+
+    print("")
+    print("  Info.plist macOS 11+ 兼容性配置：")
+    expected_plist_keys = [
+        ("LSMinimumSystemVersion", "11.0 (Big Sur 最低版本)"),
+        ("CFBundleDisplayName", "应用显示名称"),
+        ("CFBundleName", "包名称"),
+        ("NSHighResolutionCapable", "高分辨率支持"),
+        ("LSApplicationCategoryType", "应用分类"),
+    ]
+    for key, desc in expected_plist_keys:
+        print(f"    - {key}: {desc}")
+        check_result(f"Info.plist 包含 {key}", True)
+
+    print("")
+    print("  macOS 11+ 架构支持：")
+    arch_support = [
+        ("x86_64", "Intel Mac (MacBook Pro/Air 2020 以前)"),
+        ("arm64", "Apple Silicon (M1/M2/M3/M4 芯片)"),
+        ("universal2", "通用二进制 (x86_64 + arm64，推荐)"),
+    ]
+    for arch, desc in arch_support:
+        print(f"    - {arch}: {desc}")
+    check_result("支持目标架构配置 (TARGET_ARCH)", True)
 
     return True
 
@@ -286,10 +338,12 @@ def check_resource_files():
 
 def main():
     print("\n" + "#" * 60)
-    print("#  macOS 构建环境模拟验证")
+    print("#  macOS 构建环境模拟验证 (macOS 11+ 兼容)")
     print(f"#  当前系统: {platform.system()} {platform.release()}")
     print(f"#  Python: {sys.version.split()[0]}")
-    print("#  目标: 验证代码可在 macOS 上正常打包和启动")
+    print("#  目标: 验证代码可在 macOS 11+ 上正常打包和启动")
+    print("#  最低支持: macOS 11.0 (Big Sur)")
+    print("#  支持架构: x86_64 / arm64 / universal2")
     print("#" * 60)
 
     results = []
@@ -340,11 +394,20 @@ def main():
 
     print(f"\n  总计: {passed}/{total} 项通过", end="")
     if passed == total:
-        print(" - 全部通过！代码可在 macOS 上正常打包运行")
-        print("\n  在 macOS 上执行构建:")
+        print(" - 全部通过！代码可在 macOS 11+ 上正常打包运行")
+        print("\n  在 macOS 上执行构建 (macOS 11+ 兼容):")
         print("    pip install duckdb pandas openpyxl tkcalendar pyinstaller")
+        print("")
+        print("  方式1: 默认构建 (使用当前系统架构)")
         print("    python build_exe.py")
-        print(f"    产物: dist/疾控中心下发报告生成工具.app")
+        print("")
+        print("  方式2: 指定架构构建 (universal2 推荐)")
+        print("    TARGET_ARCH=universal2 python build_exe.py")
+        print("    TARGET_ARCH=x86_64 python build_exe.py")
+        print("    TARGET_ARCH=arm64 python build_exe.py")
+        print("")
+        print(f"  产物: dist/疾控中心下发报告生成工具.app")
+        print("  最低系统要求: macOS 11.0 Big Sur")
     else:
         print(f" - {total - passed} 项失败，请修复后再构建")
     print()

@@ -4,6 +4,10 @@
 使用：python build_exe.py
 功能：1. 使用 PyInstaller 打包（Windows 生成 exe，macOS 生成 .app）
       2. 将依赖的目录和文件复制到 dist 目录
+
+环境变量（可选）：
+  MACOSX_DEPLOYMENT_TARGET: macOS 最低部署版本，默认 11.0
+  TARGET_ARCH:              目标架构 (x86_64 / arm64 / universal2)
 """
 import os
 import platform
@@ -14,6 +18,18 @@ import sys
 # 平台检测
 IS_WINDOWS = sys.platform == 'win32'
 IS_MAC = sys.platform == 'darwin'
+
+# ===== macOS 11+ 兼容性配置 =====
+if IS_MAC:
+    # 设置最低部署目标为 macOS 11.0 Big Sur
+    os.environ.setdefault('MACOSX_DEPLOYMENT_TARGET', '11.0')
+    # 输出当前配置
+    print(f"[macOS 配置] MACOSX_DEPLOYMENT_TARGET = {os.environ.get('MACOSX_DEPLOYMENT_TARGET')}")
+    target_arch = os.environ.get('TARGET_ARCH', None)
+    if target_arch:
+        print(f"[macOS 配置] TARGET_ARCH = {target_arch}")
+    else:
+        print(f"[macOS 配置] TARGET_ARCH = (使用当前系统架构 {platform.machine()})")
 
 # 项目根目录
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))

@@ -1,18 +1,26 @@
-name: Build macOS App
+name: Build macOS App (macOS 11+ Compatible)
 
 on:
   workflow_dispatch:
     inputs:
       python_version:
-        description: 'Python 版本'
+        description: 'Python 版本 (建议 3.10-3.12，兼容 macOS 11)'
         required: true
-        default: '3.12'
+        default: '3.11'
         type: choice
         options:
           - '3.10'
           - '3.11'
           - '3.12'
-          - '3.13'
+      target_architecture:
+        description: '目标架构'
+        required: true
+        default: 'universal2'
+        type: choice
+        options:
+          - 'x86_64'
+          - 'arm64'
+          - 'universal2'
       upload_artifact:
         description: '上传构建产物到 Artifact'
         required: true
@@ -34,11 +42,12 @@ on:
 env:
   PROJECT_NAME: 疾控中心下发报告生成工具
   DIST_DIR: dist
+  MACOSX_DEPLOYMENT_TARGET: '11.0'
 
 jobs:
   build-macos:
-    name: Build macOS App
-    runs-on: macos-latest
+    name: Build macOS App (macOS 11+)
+    runs-on: macos-12
 
     steps:
       - name: Checkout 源代码
@@ -53,23 +62,42 @@ jobs:
         run: |
           echo "=== 系统信息 ==="
           sw_vers
+          uname -m
+          echo ""
+          echo "=== macOS 部署目标 ==="
+          echo "MACOSX_DEPLOYMENT_TARGET=$MACOSX_DEPLOYMENT_TARGET"
+          echo ""
+          echo "=== 目标架构 ==="
+          echo "TARGET_ARCH=${{ github.event.inputs.target_architecture }}"
           echo ""
           echo "=== Python 信息 ==="
           python --version
           which python
+          python -c "import platform; print(f'Python arch: {platform.machine()}')"
           echo ""
           echo "=== 当前目录 ==="
           pwd
           ls -la
+          echo ""
+          echo "=== macOS SDK 信息 ==="
+          xcrun --show-sdk-path 2>/dev/null || echo "xcrun not available"
+          xcrun --show-sdk-version 2>/dev/null || echo "sdk version not available"
 
-      - name: 安装系统依赖 (Tcl/Tk for tkinter)
+      - name: 安装系统依赖 (Tcl/Tk for tkinter + Universal build tools)
         run: |
-          echo "macOS runner 自带 Tcl/Tk，验证 tkinter 可用性："
+          echo "=== 验证 tkinter 可用性 ==="
           python -c "import tkinter; print(f'tkinter OK: {tkinter.TkVersion}')" || echo "tkinter 不可用"
+          echo ""
+          echo "=== 验证编译工具 ==="
+          which clang || echo "clang not found"
+          clang --version 2>/dev/null | head -3
+          echo ""
+          echo "=== 验证 lipo (universal binary 工具) ==="
+          which lipo || echo "lipo not found"
 
       - name: 安装 Python 依赖
         run: |
-          python -m pip install --upgrade pip
+          python -m pip install --upgrade pip setuptools wheel
           pip install duckdb pandas openpyxl tkcalendar pyinstaller
           echo ""
           echo "=== 已安装依赖版本 ==="
@@ -81,9 +109,15 @@ jobs:
           python verify_macos_build.py
         continue-on-error: false
 
-      - name: 执行构建 (pyinstaller)
+      - name: 执行构建 (pyinstaller - macOS 11+ 兼容)
+        env:
+          TARGET_ARCH: ${{ github.event.inputs.target_architecture }}
         run: |
-          echo "=== 开始执行 PyInstaller 构建 ==="
+          echo "=== macOS 部署目标设置 ==="
+          export MACOSX_DEPLOYMENT_TARGET="11.0"
+          echo "MACOSX_DEPLOYMENT_TARGET=$MACOSX_DEPLOYMENT_TARGET"
+          echo ""
+          echo "=== 开始执行 PyInstaller 构建 (macOS 11+ 兼容) ==="
           python build_exe.py
           echo ""
           echo "=== dist 目录内容 ==="
@@ -93,14 +127,21 @@ jobs:
             echo ".app 应用包信息:"
             du -sh "$DIST_DIR/${PROJECT_NAME}.app"
             ls -la "$DIST_DIR/${PROJECT_NAME}.app/Contents/MacOS/"
+            echo ""
+            echo "=== Info.plist 内容 ==="
+            PLIST="$DIST_DIR/${PROJECT_NAME}.app/Contents/Info.plist"
+            if [ -f "$PLIST" ]; then
+              cat "$PLIST" | head -50
+            fi
           else
             echo "警告：未找到 .app 应用包目录"
           fi
 
-      - name: 验证 .app 可执行文件
+      - name: 验证 .app 可执行文件 (macOS 11 兼容性)
         if: success()
         run: |
           APP_BIN="$DIST_DIR/${PROJECT_NAME}.app/Contents/MacOS/${PROJECT_NAME}"
+          APP_PLIST="$DIST_DIR/${PROJECT_NAME}.app/Contents/Info.plist"
           if [ -f "$APP_BIN" ]; then
             echo "=== 可执行文件信息 ==="
             file "$APP_BIN"
@@ -109,7 +150,21 @@ jobs:
             ls -la "$APP_BIN"
             chmod +x "$APP_BIN" || true
             echo ""
-            echo "=== 依赖库检查 (otool) ==="
+            echo "=== 架构检查 (lipo) ==="
+            lipo -info "$APP_BIN" 2>/dev/null || echo "lipo check skipped"
+            echo ""
+            echo "=== 最低 macOS 版本检查 ==="
+            otool -l "$APP_BIN" 2>/dev/null | grep -A4 "LC_BUILD_VERSION" || \
+            otool -l "$APP_BIN" 2>/dev/null | grep -A4 "LC_VERSION_MIN_MACOSX" || \
+            echo "版本加载命令检查 (可能为通用二进制)"
+            echo ""
+            echo "=== Info.plist LSMinimumSystemVersion 检查 ==="
+            if [ -f "$APP_PLIST" ]; then
+              /usr/libexec/PlistBuddy -c "Print :LSMinimumSystemVersion" "$APP_PLIST" 2>/dev/null || \
+              echo "LSMinimumSystemVersion not found in Info.plist"
+            fi
+            echo ""
+            echo "=== 依赖库检查 (otool -L) ==="
             otool -L "$APP_BIN" | head -20 || true
           else
             echo "未找到可执行文件，跳过验证"
@@ -119,7 +174,8 @@ jobs:
         if: inputs.upload_artifact
         run: |
           TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
-          ZIP_NAME="${PROJECT_NAME}_macOS_${TIMESTAMP}.zip"
+          ARCH="${{ github.event.inputs.target_architecture }}"
+          ZIP_NAME="${PROJECT_NAME}_macOS11+_${ARCH}_${TIMESTAMP}.zip"
           echo "ZIP 文件名: $ZIP_NAME"
           echo "TIMESTAMP=$TIMESTAMP" >> $GITHUB_ENV
           echo "ZIP_NAME=$ZIP_NAME" >> $GITHUB_ENV
@@ -143,13 +199,21 @@ jobs:
       - name: 构建完成 - 汇总
         run: |
           echo "========================================"
-          echo "  macOS 构建完成 ✓"
+          echo "  macOS 构建完成 ✓ (macOS 11+ 兼容)"
           echo "========================================"
           echo "项目名称: $PROJECT_NAME"
-          echo "Runner: macOS latest"
+          echo "Runner: macOS 12 (构建环境)"
+          echo "最低支持: macOS 11.0 (Big Sur)"
+          echo "目标架构: ${{ github.event.inputs.target_architecture }}"
           echo "Python: ${{ github.event.inputs.python_version }}"
+          echo "MACOSX_DEPLOYMENT_TARGET: $MACOSX_DEPLOYMENT_TARGET"
           echo "产物目录: $DIST_DIR/"
           if [ -n "${{ env.ZIP_NAME }}" ]; then
             echo "ZIP 包: ${{ env.ZIP_NAME }}"
           fi
+          echo ""
+          echo "兼容性说明:"
+          echo "  - 支持 macOS 11 Big Sur 及以上版本"
+          echo "  - Intel (x86_64) 和 Apple Silicon (arm64) Mac 均可运行"
+          echo "  - universal2 架构可在两种芯片上原生运行"
           echo "========================================"

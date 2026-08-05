@@ -2,18 +2,31 @@
 """
 疾控中心下发报告生成工具 - 打包脚本
 使用：python build_exe.py
-功能：1. 使用 PyInstaller 生成 exe   2. 将依赖的目录和文件复制到 dist 目录
+功能：1. 使用 PyInstaller 打包（Windows 生成 exe，macOS 生成 .app）
+      2. 将依赖的目录和文件复制到 dist 目录
 """
 import os
+import platform
 import shutil
 import subprocess
 import sys
+
+# 平台检测
+IS_WINDOWS = sys.platform == 'win32'
+IS_MAC = sys.platform == 'darwin'
 
 # 项目根目录
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 DIST_DIR = os.path.join(PROJECT_ROOT, "dist")
 PYTHON_EXE = sys.executable
-PYINSTALLER_CMD = os.path.join(os.path.dirname(PYTHON_EXE), "Scripts", "pyinstaller.exe")
+
+# 根据平台确定 PyInstaller 可执行文件路径
+if IS_WINDOWS:
+    PYINSTALLER_CMD = os.path.join(os.path.dirname(PYTHON_EXE), "Scripts", "pyinstaller.exe")
+else:
+    # macOS / Linux: 使用 bin/pyinstaller，找不到则回退到 PATH 中的 pyinstaller
+    _candidate = os.path.join(os.path.dirname(PYTHON_EXE), "bin", "pyinstaller")
+    PYINSTALLER_CMD = _candidate if os.path.isfile(_candidate) else "pyinstaller"
 
 # PyInstaller spec 文件
 SPEC_FILE = os.path.join(PROJECT_ROOT, "report_generator.spec")
@@ -34,7 +47,10 @@ FILES_TO_COPY = [
 def run_pyinstaller():
     """执行 PyInstaller 打包"""
     print("=" * 60)
-    print("开始执行 PyInstaller 打包...")
+    print(f"开始执行 PyInstaller 打包...")
+    print(f"操作系统：{platform.system()} {platform.release()}")
+    print(f"Python：{sys.version.split()[0]}")
+    print(f"PyInstaller：{PYINSTALLER_CMD}")
     print("=" * 60)
 
     cmd = [PYINSTALLER_CMD, "--clean", "--noconfirm", SPEC_FILE]
@@ -97,6 +113,8 @@ def show_result():
                     size = f" ({size_bytes / 1024 / 1024:.1f} MB)"
                 elif size_bytes > 1024:
                     size = f" ({size_bytes / 1024:.1f} KB)"
+            elif os.path.isdir(item_path) and item.endswith('.app'):
+                size = " (macOS 应用)"
             print(f"  - {item}{size}")
     print("\n" + "=" * 60)
     print(f"产物路径：{DIST_DIR}")

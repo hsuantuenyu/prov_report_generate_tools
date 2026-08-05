@@ -1,0 +1,155 @@
+name: Build macOS App
+
+on:
+  workflow_dispatch:
+    inputs:
+      python_version:
+        description: 'Python 版本'
+        required: true
+        default: '3.12'
+        type: choice
+        options:
+          - '3.10'
+          - '3.11'
+          - '3.12'
+          - '3.13'
+      upload_artifact:
+        description: '上传构建产物到 Artifact'
+        required: true
+        default: true
+        type: boolean
+      artifact_retention_days:
+        description: 'Artifact 保留天数'
+        required: true
+        default: '30'
+        type: choice
+        options:
+          - '1'
+          - '7'
+          - '14'
+          - '30'
+          - '60'
+          - '90'
+
+env:
+  PROJECT_NAME: 疾控中心下发报告生成工具
+  DIST_DIR: dist
+
+jobs:
+  build-macos:
+    name: Build macOS App
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout 源代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Python ${{ github.event.inputs.python_version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ github.event.inputs.python_version }}
+
+      - name: 显示构建环境信息
+        run: |
+          echo "=== 系统信息 ==="
+          sw_vers
+          echo ""
+          echo "=== Python 信息 ==="
+          python --version
+          which python
+          echo ""
+          echo "=== 当前目录 ==="
+          pwd
+          ls -la
+
+      - name: 安装系统依赖 (Tcl/Tk for tkinter)
+        run: |
+          echo "macOS runner 自带 Tcl/Tk，验证 tkinter 可用性："
+          python -c "import tkinter; print(f'tkinter OK: {tkinter.TkVersion}')" || echo "tkinter 不可用"
+
+      - name: 安装 Python 依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install duckdb pandas openpyxl tkcalendar pyinstaller
+          echo ""
+          echo "=== 已安装依赖版本 ==="
+          pip list | grep -iE "duckdb|pandas|openpyxl|tkcalendar|pyinstaller"
+
+      - name: 运行 macOS 兼容性验证脚本
+        run: |
+          echo "=== 运行 macOS 兼容性验证 ==="
+          python verify_macos_build.py
+        continue-on-error: false
+
+      - name: 执行构建 (pyinstaller)
+        run: |
+          echo "=== 开始执行 PyInstaller 构建 ==="
+          python build_exe.py
+          echo ""
+          echo "=== dist 目录内容 ==="
+          ls -la "$DIST_DIR/"
+          echo ""
+          if [ -d "$DIST_DIR/${PROJECT_NAME}.app" ]; then
+            echo ".app 应用包信息:"
+            du -sh "$DIST_DIR/${PROJECT_NAME}.app"
+            ls -la "$DIST_DIR/${PROJECT_NAME}.app/Contents/MacOS/"
+          else
+            echo "警告：未找到 .app 应用包目录"
+          fi
+
+      - name: 验证 .app 可执行文件
+        if: success()
+        run: |
+          APP_BIN="$DIST_DIR/${PROJECT_NAME}.app/Contents/MacOS/${PROJECT_NAME}"
+          if [ -f "$APP_BIN" ]; then
+            echo "=== 可执行文件信息 ==="
+            file "$APP_BIN"
+            echo ""
+            echo "=== 可执行文件权限 ==="
+            ls -la "$APP_BIN"
+            chmod +x "$APP_BIN" || true
+            echo ""
+            echo "=== 依赖库检查 (otool) ==="
+            otool -L "$APP_BIN" | head -20 || true
+          else
+            echo "未找到可执行文件，跳过验证"
+          fi
+
+      - name: 打包构建产物 (ZIP)
+        if: inputs.upload_artifact
+        run: |
+          TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+          ZIP_NAME="${PROJECT_NAME}_macOS_${TIMESTAMP}.zip"
+          echo "ZIP 文件名: $ZIP_NAME"
+          echo "TIMESTAMP=$TIMESTAMP" >> $GITHUB_ENV
+          echo "ZIP_NAME=$ZIP_NAME" >> $GITHUB_ENV
+
+          cd "$DIST_DIR"
+          zip -r "../$ZIP_NAME" ./* -x "*.pyc" "__pycache__/*"
+          cd ..
+          echo ""
+          echo "=== ZIP 文件信息 ==="
+          ls -lh "$ZIP_NAME"
+
+      - name: 上传构建产物到 Artifact
+        if: inputs.upload_artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ZIP_NAME }}
+          path: ${{ env.ZIP_NAME }}
+          retention-days: ${{ github.event.inputs.artifact_retention_days }}
+          compression-level: 6
+
+      - name: 构建完成 - 汇总
+        run: |
+          echo "========================================"
+          echo "  macOS 构建完成 ✓"
+          echo "========================================"
+          echo "项目名称: $PROJECT_NAME"
+          echo "Runner: macOS latest"
+          echo "Python: ${{ github.event.inputs.python_version }}"
+          echo "产物目录: $DIST_DIR/"
+          if [ -n "${{ env.ZIP_NAME }}" ]; then
+            echo "ZIP 包: ${{ env.ZIP_NAME }}"
+          fi
+          echo "========================================"

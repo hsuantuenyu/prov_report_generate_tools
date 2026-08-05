@@ -1,10 +1,20 @@
-name: Build macOS App (macOS 11+ Compatible)
+name: Build macOS App (macOS 11-14)
 
 on:
   workflow_dispatch:
     inputs:
+      target_macos_version:
+        description: '目标 macOS 最低版本 (最低支持版本)'
+        required: true
+        default: '11'
+        type: choice
+        options:
+          - '11'
+          - '12'
+          - '13'
+          - '14'
       python_version:
-        description: 'Python 版本 (建议 3.10-3.12，兼容 macOS 11)'
+        description: 'Python 版本'
         required: true
         default: '3.11'
         type: choice
@@ -42,12 +52,13 @@ on:
 env:
   PROJECT_NAME: 疾控中心下发报告生成工具
   DIST_DIR: dist
-  MACOSX_DEPLOYMENT_TARGET: '11.0'
+  MACOSX_DEPLOYMENT_TARGET: ${{ github.event.inputs.target_macos_version }}.0
 
 jobs:
   build-macos:
-    name: Build macOS App (macOS 11+)
-    runs-on: macos-12
+    name: Build macOS App (macOS ${{ github.event.inputs.target_macos_version }}+)
+    # 根据目标版本选择 runner: 11/12 用 macos-12, 13 用 macos-13, 14 用 macos-14
+    runs-on: ${{ (github.event.inputs.target_macos_version == '14' && 'macos-14') || (github.event.inputs.target_macos_version == '13' && 'macos-13') || 'macos-12' }}
 
     steps:
       - name: Checkout 源代码
@@ -58,13 +69,26 @@ jobs:
         with:
           python-version: ${{ github.event.inputs.python_version }}
 
+      - name: 设置 macOS 版本名称映射
+        run: |
+          case "${{ github.event.inputs.target_macos_version }}" in
+            11) MACOS_NAME="Big Sur" ;;
+            12) MACOS_NAME="Monterey" ;;
+            13) MACOS_NAME="Ventura" ;;
+            14) MACOS_NAME="Sonoma" ;;
+            *) MACOS_NAME="Unknown" ;;
+          esac
+          echo "MACOS_NAME=$MACOS_NAME" >> $GITHUB_ENV
+          echo "目标 macOS: ${{ github.event.inputs.target_macos_version }} ($MACOS_NAME)"
+
       - name: 显示构建环境信息
         run: |
-          echo "=== 系统信息 ==="
+          echo "=== 系统信息 (构建环境) ==="
           sw_vers
           uname -m
           echo ""
-          echo "=== macOS 部署目标 ==="
+          echo "=== 目标 macOS 版本 ==="
+          echo "目标版本: ${{ github.event.inputs.target_macos_version }} ($MACOS_NAME)"
           echo "MACOSX_DEPLOYMENT_TARGET=$MACOSX_DEPLOYMENT_TARGET"
           echo ""
           echo "=== 目标架构 ==="
@@ -109,15 +133,16 @@ jobs:
           python verify_macos_build.py
         continue-on-error: false
 
-      - name: 执行构建 (pyinstaller - macOS 11+ 兼容)
+      - name: 执行构建 (pyinstaller - macOS ${{ github.event.inputs.target_macos_version }}+ 兼容)
         env:
           TARGET_ARCH: ${{ github.event.inputs.target_architecture }}
         run: |
           echo "=== macOS 部署目标设置 ==="
-          export MACOSX_DEPLOYMENT_TARGET="11.0"
+          export MACOSX_DEPLOYMENT_TARGET="${{ github.event.inputs.target_macos_version }}.0"
           echo "MACOSX_DEPLOYMENT_TARGET=$MACOSX_DEPLOYMENT_TARGET"
+          echo "目标 macOS: ${{ github.event.inputs.target_macos_version }} ($MACOS_NAME)"
           echo ""
-          echo "=== 开始执行 PyInstaller 构建 (macOS 11+ 兼容) ==="
+          echo "=== 开始执行 PyInstaller 构建 (macOS ${{ github.event.inputs.target_macos_version }}+ 兼容) ==="
           python build_exe.py
           echo ""
           echo "=== dist 目录内容 ==="
@@ -137,7 +162,7 @@ jobs:
             echo "警告：未找到 .app 应用包目录"
           fi
 
-      - name: 验证 .app 可执行文件 (macOS 11 兼容性)
+      - name: 验证 .app 可执行文件 (macOS ${{ github.event.inputs.target_macos_version }} 兼容性)
         if: success()
         run: |
           APP_BIN="$DIST_DIR/${PROJECT_NAME}.app/Contents/MacOS/${PROJECT_NAME}"
@@ -175,7 +200,8 @@ jobs:
         run: |
           TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
           ARCH="${{ github.event.inputs.target_architecture }}"
-          ZIP_NAME="${PROJECT_NAME}_macOS11+_${ARCH}_${TIMESTAMP}.zip"
+          MACOS_VER="${{ github.event.inputs.target_macos_version }}"
+          ZIP_NAME="${PROJECT_NAME}_macOS${MACOS_VER}+_${ARCH}_${TIMESTAMP}.zip"
           echo "ZIP 文件名: $ZIP_NAME"
           echo "TIMESTAMP=$TIMESTAMP" >> $GITHUB_ENV
           echo "ZIP_NAME=$ZIP_NAME" >> $GITHUB_ENV
@@ -199,11 +225,11 @@ jobs:
       - name: 构建完成 - 汇总
         run: |
           echo "========================================"
-          echo "  macOS 构建完成 ✓ (macOS 11+ 兼容)"
+          echo "  macOS 构建完成 ✓ (macOS ${{ github.event.inputs.target_macos_version }}+ 兼容)"
           echo "========================================"
           echo "项目名称: $PROJECT_NAME"
-          echo "Runner: macOS 12 (构建环境)"
-          echo "最低支持: macOS 11.0 (Big Sur)"
+          echo "构建环境: macOS ($(sw_vers -productVersion))"
+          echo "最低支持: macOS ${{ github.event.inputs.target_macos_version }}.0 ($MACOS_NAME)"
           echo "目标架构: ${{ github.event.inputs.target_architecture }}"
           echo "Python: ${{ github.event.inputs.python_version }}"
           echo "MACOSX_DEPLOYMENT_TARGET: $MACOSX_DEPLOYMENT_TARGET"
@@ -213,7 +239,13 @@ jobs:
           fi
           echo ""
           echo "兼容性说明:"
-          echo "  - 支持 macOS 11 Big Sur 及以上版本"
-          echo "  - Intel (x86_64) 和 Apple Silicon (arm64) Mac 均可运行"
-          echo "  - universal2 架构可在两种芯片上原生运行"
+          echo "  - 支持 macOS ${{ github.event.inputs.target_macos_version }} ($MACOS_NAME) 及以上版本"
+          echo "  - 目标架构: ${{ github.event.inputs.target_architecture }}"
+          if [ "${{ github.event.inputs.target_architecture }}" = "universal2" ]; then
+            echo "  - Intel (x86_64) 和 Apple Silicon (arm64) Mac 均可原生运行"
+          elif [ "${{ github.event.inputs.target_architecture }}" = "x86_64" ]; then
+            echo "  - 仅 Intel Mac 原生运行 (Apple Silicon 通过 Rosetta 2 转译)"
+          elif [ "${{ github.event.inputs.target_architecture }}" = "arm64" ]; then
+            echo "  - 仅 Apple Silicon Mac 原生运行 (M1/M2/M3/M4)"
+          fi
           echo "========================================"

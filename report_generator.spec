@@ -6,7 +6,7 @@ macOS:   生成 .app 应用包 (兼容 macOS 11+)
 import sys
 import os
 
-# ===== macOS 11+ 兼容性配置 =====
+# ===== macOS 兼容性配置 =====
 # 通过环境变量控制目标架构: x86_64 / arm64 / universal2
 TARGET_ARCH = os.environ.get('TARGET_ARCH', None)
 if TARGET_ARCH == 'universal2':
@@ -17,9 +17,10 @@ elif TARGET_ARCH in ('x86_64', 'arm64'):
 else:
     PYI_TARGET_ARCH = None  # 使用当前系统架构
 
-# 设置 macOS 部署目标（兼容 macOS 11 Big Sur）
+# 读取 macOS 部署目标版本 (默认 11.0，支持 11-14)
+MACOS_MIN_VERSION = os.environ.get('MACOSX_DEPLOYMENT_TARGET', '11.0')
 if sys.platform == 'darwin':
-    os.environ.setdefault('MACOSX_DEPLOYMENT_TARGET', '11.0')
+    os.environ.setdefault('MACOSX_DEPLOYMENT_TARGET', MACOS_MIN_VERSION)
 
 a = Analysis(
     ['report_generator.py'],
@@ -59,12 +60,12 @@ exe = EXE(
     **({'version': 'file_version_info.txt'} if sys.platform == 'win32' else {}),
 )
 
-# macOS: 生成 .app 应用包，配置最低系统版本为 macOS 11.0
+# macOS: 生成 .app 应用包，配置最低系统版本
 if sys.platform == 'darwin':
-    # Info.plist 配置 - 声明 macOS 11+ 兼容性
+    # Info.plist 配置 - 声明最低 macOS 版本 (从 MACOSX_DEPLOYMENT_TARGET 读取)
     info_plist = {
-        # 最低支持 macOS 11.0 (Big Sur)
-        'LSMinimumSystemVersion': '11.0',
+        # 最低支持 macOS 版本 (11.0-14.0，由环境变量控制)
+        'LSMinimumSystemVersion': MACOS_MIN_VERSION,
         # 应用显示名称
         'CFBundleDisplayName': '疾控中心下发报告生成工具',
         # 包名称
@@ -82,6 +83,6 @@ if sys.platform == 'darwin':
         name='疾控中心下发报告生成工具.app',
         icon=None,
         bundle_identifier=None,
-        # 注入 Info.plist 配置（macOS 11+ 最低版本要求）
+        # 注入 Info.plist 配置（最低版本由 MACOSX_DEPLOYMENT_TARGET 控制）
         info_plist=info_plist,
     )

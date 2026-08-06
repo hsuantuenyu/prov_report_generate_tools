@@ -87,15 +87,11 @@ class ReportGeneratorTool:
         y = (screen_height - window_height) // 2
         self.root.geometry(f"{window_width}x{window_height}+{x}+{y}")
 
-        # 允许调整大小
+        # 允许调整大小（macOS 上必须为 True 才会显示绿色最大化按钮）
         self.root.resizable(True, True)
 
-        # 若是 macOS，尝试最大化（部分 Tk 版本支持）
-        if sys.platform == 'darwin':
-            try:
-                self.root.attributes('-zoomed', True)
-            except Exception:
-                pass
+        # macOS 上不使用 -zoomed，会触发全屏模式导致标题栏按钮被隐藏
+        # 窗口已设置为屏幕 90%，用户可通过绿色按钮手动放大
 
         # 全局滚动条样式：加宽所有滚动条
         style = ttk.Style()

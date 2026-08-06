@@ -99,8 +99,29 @@ class ReportGeneratorTool:
 
         # 全局滚动条样式：加宽所有滚动条
         style = ttk.Style()
-        style.configure("Vertical.TScrollbar", width=32, arrowsize=24)
-        style.configure("Horizontal.TScrollbar", width=32, arrowsize=24)
+
+        # macOS 特定样式优化
+        if sys.platform == 'darwin':
+            # 使用 aqua 主题更贴合 macOS
+            available_themes = style.theme_names()
+            if 'aqua' in available_themes:
+                style.theme_use('aqua')
+            elif 'clam' in available_themes:
+                style.theme_use('clam')
+
+            # 紧凑的 macOS 样式
+            style.configure("TFrame", padding=0)
+            style.configure("TLabel", padding=0)
+            style.configure("TButton", padding=(8, 4))
+            style.configure("TNotebook", tabposition='n')
+            style.configure("TNotebook.Tab", padding=(12, 6))
+            style.configure("TLabelframe", padding=0)
+            style.configure("TLabelframe.Label", padding=(4, 0))
+            style.configure("Vertical.TScrollbar", width=20, arrowsize=18)
+            style.configure("Horizontal.TScrollbar", height=20, arrowsize=18)
+        else:
+            style.configure("Vertical.TScrollbar", width=32, arrowsize=24)
+            style.configure("Horizontal.TScrollbar", width=32, arrowsize=24)
 
         # 资源文件使用绝对路径（解决 .app 双击启动时工作目录不对的问题）
         self.db_path = resource_path("prov_report.db")
@@ -209,12 +230,14 @@ class ReportGeneratorTool:
         menubar.add_cascade(label="帮助", menu=help_menu)
         self.root.config(menu=menubar)
 
-        main_frame = ttk.Frame(self.root, padding="10")
+        # macOS 优化：外层 padding 减小，给内容区更多空间
+        outer_pad = 5 if sys.platform == 'darwin' else 10
+        main_frame = ttk.Frame(self.root, padding=outer_pad)
         main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
-              
+
         # 国标/全部选择框
         flag_frame = ttk.Frame(main_frame)
-        flag_frame.grid(row=0, column=0, sticky=tk.W, pady=5)
+        flag_frame.grid(row=0, column=0, sticky=tk.W, pady=(0, 5))
 
         flag_label = ttk.Label(flag_frame, text="质控报告生成类别：", font=('微软雅黑', 10, 'bold'))
         flag_label.pack(side=tk.LEFT, padx=5)
@@ -224,24 +247,30 @@ class ReportGeneratorTool:
 
         all_radio = ttk.Radiobutton(flag_frame, text="全部", variable=self.national_flag_var, value="all")
         all_radio.pack(side=tk.LEFT, padx=5)
-        
+
+        # Notebook 样式：macOS 上使用较小内边距
         self.notebook = ttk.Notebook(main_frame)
         self.notebook.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         main_frame.columnconfigure(0, weight=1)
         main_frame.rowconfigure(1, weight=1)
 
-        tab1 = ttk.Frame(self.notebook, padding="10")
-        tab2 = ttk.Frame(self.notebook, padding="10")
-        tab3 = ttk.Frame(self.notebook, padding="10")
-        tab4 = ttk.Frame(self.notebook, padding="10")
+        # macOS 上 Tab Frame 用更小 padding，避免内容被挤压
+        tab_pad = 3 if sys.platform == 'darwin' else 10
 
-        self.notebook.add(tab1, text="1. 数据库测试")
-        self.notebook.add(tab2, text="2. 数据导入")
-        self.notebook.add(tab3, text="3. 数据加工")
-        self.notebook.add(tab4, text="4. 数据导出")
+        tab1 = ttk.Frame(self.notebook, padding=tab_pad)
+        tab2 = ttk.Frame(self.notebook, padding=tab_pad)
+        tab3 = ttk.Frame(self.notebook, padding=tab_pad)
+        tab4 = ttk.Frame(self.notebook, padding=tab_pad)
+        tab5 = ttk.Frame(self.notebook, padding=tab_pad)
 
-        tab5 = ttk.Frame(self.notebook, padding="10")
-        self.notebook.add(tab5, text="5. 机构管理")
+        # 选项卡标签：短标签，适配 macOS 宽度
+        tab_label_pad = (10, 4) if sys.platform == 'darwin' else (20, 8)
+
+        self.notebook.add(tab1, text="① 数据库测试", padding=tab_label_pad)
+        self.notebook.add(tab2, text="② 数据导入", padding=tab_label_pad)
+        self.notebook.add(tab3, text="③ 数据加工", padding=tab_label_pad)
+        self.notebook.add(tab4, text="④ 数据导出", padding=tab_label_pad)
+        self.notebook.add(tab5, text="⑤ 机构管理", padding=tab_label_pad)
 
         self.create_db_test_tab(tab1)
         self.create_data_import_tab(tab2)
@@ -251,7 +280,8 @@ class ReportGeneratorTool:
         
     def create_db_test_tab(self, parent):
         """创建数据库测试 Tab"""
-        frame = ttk.LabelFrame(parent, text="DuckDB 数据库连接测试", padding="5")
+        lf_pad = 3 if sys.platform == 'darwin' else 5
+        frame = ttk.LabelFrame(parent, text="DuckDB 数据库连接测试", padding=lf_pad)
         frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         parent.columnconfigure(0, weight=1)
         parent.rowconfigure(0, weight=1)
@@ -307,7 +337,8 @@ class ReportGeneratorTool:
             
     def create_data_import_tab(self, parent):
         """创建数据导入 Tab"""
-        frame = ttk.LabelFrame(parent, text="数据导入", padding="5")
+        lf_pad = 3 if sys.platform == 'darwin' else 5
+        frame = ttk.LabelFrame(parent, text="数据导入", padding=lf_pad)
         frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         parent.columnconfigure(0, weight=1)
         parent.rowconfigure(0, weight=1)
@@ -570,7 +601,8 @@ class ReportGeneratorTool:
         
     def create_data_process_tab(self, parent):
         """创建数据加工 Tab"""
-        frame = ttk.LabelFrame(parent, text="数据加工", padding="5")
+        lf_pad = 3 if sys.platform == 'darwin' else 5
+        frame = ttk.LabelFrame(parent, text="数据加工", padding=lf_pad)
         frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         parent.columnconfigure(0, weight=1)
         parent.rowconfigure(0, weight=1)
@@ -700,13 +732,15 @@ in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realt
         
     def create_data_export_tab(self, parent):
         """创建数据导出 Tab"""
-        frame = ttk.LabelFrame(parent, text="数据导出", padding="10")
+        lf_pad = 3 if sys.platform == 'darwin' else 5
+        inner_pad = 2 if sys.platform == 'darwin' else 5
+        frame = ttk.LabelFrame(parent, text="数据导出", padding=lf_pad)
         frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         parent.columnconfigure(0, weight=1)
         parent.rowconfigure(0, weight=1)
         
         # 模板文件区域
-        template_frame = ttk.LabelFrame(frame, text="模板文件", padding="5")
+        template_frame = ttk.LabelFrame(frame, text="模板文件", padding=inner_pad)
         template_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=2)
         frame.columnconfigure(0, weight=1)
         
@@ -717,7 +751,7 @@ in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realt
         select_template_btn.grid(row=0, column=1, padx=5)
         
         # 导出设置区域
-        export_frame = ttk.LabelFrame(frame, text="导出设置", padding="5")
+        export_frame = ttk.LabelFrame(frame, text="导出设置", padding=inner_pad)
         export_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=2)
         frame.columnconfigure(0, weight=1)
         
@@ -807,7 +841,8 @@ in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realt
 
     def create_org_management_tab(self, parent):
         """创建机构管理 Tab"""
-        frame = ttk.LabelFrame(parent, text="机构管理", padding="5")
+        lf_pad = 3 if sys.platform == 'darwin' else 5
+        frame = ttk.LabelFrame(parent, text="机构管理", padding=lf_pad)
         frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         parent.columnconfigure(0, weight=1)
         parent.rowconfigure(0, weight=1)

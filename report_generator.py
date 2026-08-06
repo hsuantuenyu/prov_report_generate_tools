@@ -82,9 +82,9 @@ class ReportGeneratorTool:
         screen_height = root.winfo_screenheight()
 
         if sys.platform == 'darwin':
-            # macOS：固定 800x700
-            window_width = 880
-            window_height = 700
+            # macOS：固定 720x650
+            window_width = 720
+            window_height = 650
         else:
             # Windows：固定 700x700
             window_width = 700
@@ -111,10 +111,13 @@ class ReportGeneratorTool:
             style.configure("TFrame", padding=0)
             style.configure("TLabel", padding=0)
             style.configure("TButton", padding=(6, 3))
-            style.configure("TNotebook", tabposition='n')
-            style.configure("TNotebook.Tab", padding=(10, 4))
-            style.configure("TLabelframe", padding=0)
-            style.configure("TLabelframe.Label", padding=(4, 0))
+            style.configure("TNotebook", tabposition='n', padding=0)
+            # 标签页左右 padding 对称
+            style.configure("TNotebook.Tab", padding=(8, 4))
+            # LabelFrame: borderwidth 减少，内容区左右对称
+            style.configure("TLabelframe", padding=0, borderwidth=1)
+            # LabelFrame 的标题 label 增加左侧偏移，避免视觉上左边界过宽
+            style.configure("TLabelframe.Label", padding=(6, 0))
             style.configure("TEntry", padding=2)
             style.configure("Vertical.TScrollbar", width=16, arrowsize=14)
             style.configure("Horizontal.TScrollbar", height=16, arrowsize=14)
@@ -229,10 +232,17 @@ class ReportGeneratorTool:
         menubar.add_cascade(label="帮助", menu=help_menu)
         self.root.config(menu=menubar)
 
-        # macOS 优化：外层 padding 最小化
-        outer_pad = 2 if sys.platform == 'darwin' else 10
+        # macOS 优化：外层 padding 使用对称边距（均匀的左右上下内边距）
+        if sys.platform == 'darwin':
+            # clam 主题下设置显式对称 padding: (左, 上, 右, 下)
+            outer_pad = (5, 3, 5, 3)
+        else:
+            outer_pad = 10
         main_frame = ttk.Frame(self.root, padding=outer_pad)
         main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        # 确保根窗口也给 main_frame 均匀分配空间
+        self.root.columnconfigure(0, weight=1)
+        self.root.rowconfigure(0, weight=1)
 
         # 国标/全部选择框
         flag_frame = ttk.Frame(main_frame)
@@ -253,8 +263,11 @@ class ReportGeneratorTool:
         main_frame.columnconfigure(0, weight=1)
         main_frame.rowconfigure(1, weight=1)
 
-        # macOS 上 Tab Frame 用 0 padding，由 ttk 样式控制
-        tab_pad = 0 if sys.platform == 'darwin' else 10
+        # macOS 上 Tab Frame 用统一的对称 padding: (左,上,右,下)
+        if sys.platform == 'darwin':
+            tab_pad = (5, 3, 5, 3)
+        else:
+            tab_pad = 10
 
         tab1 = ttk.Frame(self.notebook, padding=tab_pad)
         tab2 = ttk.Frame(self.notebook, padding=tab_pad)
@@ -279,7 +292,11 @@ class ReportGeneratorTool:
         
     def create_db_test_tab(self, parent):
         """创建数据库测试 Tab"""
-        lf_pad = 1 if sys.platform == 'darwin' else 5
+        # 左右对称 padding: (左, 上, 右, 下)
+        if sys.platform == 'darwin':
+            lf_pad = (4, 3, 4, 3)
+        else:
+            lf_pad = 5
         frame = ttk.LabelFrame(parent, text="DuckDB 数据库连接测试", padding=lf_pad)
         frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         parent.columnconfigure(0, weight=1)
@@ -336,7 +353,11 @@ class ReportGeneratorTool:
             
     def create_data_import_tab(self, parent):
         """创建数据导入 Tab"""
-        lf_pad = 1 if sys.platform == 'darwin' else 5
+        # 左右对称 padding: (左, 上, 右, 下)
+        if sys.platform == 'darwin':
+            lf_pad = (4, 3, 4, 3)
+        else:
+            lf_pad = 5
         frame = ttk.LabelFrame(parent, text="数据导入", padding=lf_pad)
         frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         parent.columnconfigure(0, weight=1)
@@ -600,7 +621,11 @@ class ReportGeneratorTool:
         
     def create_data_process_tab(self, parent):
         """创建数据加工 Tab"""
-        lf_pad = 1 if sys.platform == 'darwin' else 5
+        # 左右对称 padding: (左, 上, 右, 下)
+        if sys.platform == 'darwin':
+            lf_pad = (4, 3, 4, 3)
+        else:
+            lf_pad = 5
         frame = ttk.LabelFrame(parent, text="数据加工", padding=lf_pad)
         frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         parent.columnconfigure(0, weight=1)
@@ -731,8 +756,12 @@ in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realt
         
     def create_data_export_tab(self, parent):
         """创建数据导出 Tab"""
-        lf_pad = 1 if sys.platform == 'darwin' else 5
-        inner_pad = 1 if sys.platform == 'darwin' else 5
+        # 左右对称 padding: (左, 上, 右, 下)
+        if sys.platform == 'darwin':
+            lf_pad = (4, 3, 4, 3)
+        else:
+            lf_pad = 5
+        inner_pad = (3, 2, 3, 2) if sys.platform == 'darwin' else 5
         frame = ttk.LabelFrame(parent, text="数据导出", padding=lf_pad)
         frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         parent.columnconfigure(0, weight=1)
@@ -840,7 +869,11 @@ in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realt
 
     def create_org_management_tab(self, parent):
         """创建机构管理 Tab"""
-        lf_pad = 1 if sys.platform == 'darwin' else 5
+        # 左右对称 padding: (左, 上, 右, 下)
+        if sys.platform == 'darwin':
+            lf_pad = (4, 3, 4, 3)
+        else:
+            lf_pad = 5
         frame = ttk.LabelFrame(parent, text="机构管理", padding=lf_pad)
         frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         parent.columnconfigure(0, weight=1)

@@ -77,21 +77,26 @@ class ReportGeneratorTool:
         # 确定基准目录
         self.app_base_dir = get_app_base_dir()
 
-        # ===== 窗口大小：最大化 / 占据屏幕 90% =====
+        # ===== 窗口大小 =====
         screen_width = root.winfo_screenwidth()
         screen_height = root.winfo_screenheight()
-        # macOS 上 ttk 不支持 zoomed 属性，改为占屏幕 90%
-        window_width = int(screen_width * 0.9)
-        window_height = int(screen_height * 0.9)
+
+        if sys.platform == 'darwin':
+            # macOS：占屏幕 70%
+            window_width = int(screen_width * 0.7)
+            window_height = int(screen_height * 0.7)
+        else:
+            # Windows：固定 700x700
+            window_width = 700
+            window_height = 700
+
+        # 启动时居中
         x = (screen_width - window_width) // 2
         y = (screen_height - window_height) // 2
         self.root.geometry(f"{window_width}x{window_height}+{x}+{y}")
 
         # 允许调整大小（macOS 上必须为 True 才会显示绿色最大化按钮）
         self.root.resizable(True, True)
-
-        # macOS 上不使用 -zoomed，会触发全屏模式导致标题栏按钮被隐藏
-        # 窗口已设置为屏幕 90%，用户可通过绿色按钮手动放大
 
         # 全局滚动条样式：加宽所有滚动条
         style = ttk.Style()

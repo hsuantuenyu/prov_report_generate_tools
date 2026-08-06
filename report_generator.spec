@@ -76,6 +76,11 @@ if sys.platform == 'darwin':
         'NSHighResolutionCapable': True,
         # 应用类别
         'LSApplicationCategoryType': 'public.app-category.productivity',
+        # 关键：声明主类为 NSApplication，确保 macOS 正确初始化 GUI 应用
+        # 缺少此项时，窗口标题栏按钮（关闭/最小化/最大化）可能不显示
+        'NSPrincipalClass': 'NSApplication',
+        # 标记为普通 GUI 应用（非后台/菜单栏应用），确保显示 Dock 图标和窗口装饰
+        'LSBackgroundOnly': False,
     }
 
     app = BUNDLE(

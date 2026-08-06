@@ -98,30 +98,39 @@ class ReportGeneratorTool:
         # 允许调整大小（macOS 上必须为 True 才会显示绿色最大化按钮）
         self.root.resizable(False, False)
 
-        # 全局滚动条样式：加宽所有滚动条
+        # ===== ttk 主题与样式 =====
         style = ttk.Style()
 
-        # macOS 特定样式优化
         if sys.platform == 'darwin':
-            # macOS 上优先用 clam 主题，aqua 主题有无法覆盖的大边距
-            available_themes = style.theme_names()
-            style.theme_use('clam')
+            # macOS 必须使用 aqua 主题才能获得原生外观（圆角按钮、原生标签页、白色背景）
+            # 注意：PyInstaller 打包后 Aqua 主题必须由 tk 自带的 libtk 渲染，
+            # 显式设置 theme_use('aqua') 比依赖默认值更可靠。
+            try:
+                available_themes = style.theme_names()
+                if 'aqua' in available_themes:
+                    style.theme_use('aqua')
+                else:
+                    # 打包时若 Tk 库未携带 aqua，退而求其次用 default/classic，
+                    # 绝对不要使用 clam（灰色很丑）。
+                    for fallback in ('default', 'classic'):
+                        if fallback in available_themes:
+                            style.theme_use(fallback)
+                            break
+            except Exception:
+                pass
 
-            # 紧凑的 macOS 样式
-            style.configure("TFrame", padding=0)
-            style.configure("TLabel", padding=0)
-            style.configure("TButton", padding=(6, 3))
-            style.configure("TNotebook", tabposition='n', padding=0)
-            # 标签页左右 padding 对称
-            style.configure("TNotebook.Tab", padding=(8, 4))
-            # LabelFrame: borderwidth 减少，内容区左右对称
-            style.configure("TLabelframe", padding=0, borderwidth=1)
-            # LabelFrame 的标题 label 增加左侧偏移，避免视觉上左边界过宽
-            style.configure("TLabelframe.Label", padding=(6, 0))
-            style.configure("TEntry", padding=2)
-            style.configure("Vertical.TScrollbar", width=16, arrowsize=14)
-            style.configure("Horizontal.TScrollbar", height=16, arrowsize=14)
+            # Aqua 主题大部分样式不可覆盖（是系统原生渲染），
+            # 这里仅配置不会破坏原生外观的值。
+            try:
+                style.configure("TFrame", padding=0)
+                style.configure("TLabel", padding=0)
+                style.configure("TNotebook", tabposition='n')
+                style.configure("TEntry", padding=3)
+                style.configure("TButton", padding=(12, 4))
+            except Exception:
+                pass
         else:
+            # Windows：滚动条加宽
             style.configure("Vertical.TScrollbar", width=32, arrowsize=24)
             style.configure("Horizontal.TScrollbar", width=32, arrowsize=24)
 

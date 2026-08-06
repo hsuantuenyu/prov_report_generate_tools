@@ -734,33 +734,49 @@ in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realt
             self.national_flag_var.trace('w', lambda *args: self.update_export_filename())
         export_name_label = ttk.Label(export_frame, text="导出文件名:")
         export_name_label.grid(row=0, column=0, sticky=tk.W, pady=2)
-        
+
         export_name_entry = ttk.Entry(export_frame, textvariable=self.export_name_var, width=80)
         export_name_entry.grid(row=0, column=1, sticky=(tk.W, tk.E), pady=2)
         export_frame.columnconfigure(1, weight=1)
-        
+
+        # ===== 默认导出目录：用户文档目录（可写）=====
+        # macOS 上 cwd 通常是只读的 / 或 /Applications，需要使用用户可写目录
+        home_documents = os.path.expanduser('~/Documents')
+        if os.path.isdir(home_documents) and os.access(home_documents, os.W_OK):
+            default_export_dir = home_documents
+        elif os.path.isdir(os.path.expanduser('~')) and os.access(os.path.expanduser('~'), os.W_OK):
+            default_export_dir = os.path.expanduser('~')
+        else:
+            default_export_dir = self.app_base_dir  # 兜底：应用所在目录
+
+        self._export_dir = default_export_dir
+
         # 添加路径显示
-        self.export_path_var = tk.StringVar(value=os.path.abspath(default_name))
+        default_full_path = os.path.join(self._export_dir, default_name)
+        self.export_path_var = tk.StringVar(value=default_full_path)
         export_path_label = ttk.Label(export_frame, text="完整路径:")
         export_path_label.grid(row=1, column=0, sticky=tk.W, pady=2)
-        
+
         export_path_entry = ttk.Entry(export_frame, textvariable=self.export_path_var, width=80)
         export_path_entry.grid(row=1, column=1, sticky=(tk.W, tk.E), pady=2)
         export_frame.columnconfigure(1, weight=1)
-        
-        # 文件名变化时更新路径
+
+        # 文件名变化时更新路径（保留目录部分，只替换文件名）
         def update_path(*args):
             filename = self.export_name_var.get()
-            self.export_path_var.set(os.path.abspath(filename))
-        
+            self.export_path_var.set(os.path.join(self._export_dir, filename))
+
         self.export_name_var.trace('w', update_path)
         
-        # 导出按钮（两个按钮放在同一行，独立按钮框架）
+        # 导出按钮（三个按钮放在同一行，独立按钮框架）
         btn_frame = ttk.Frame(frame)
         btn_frame.grid(row=2, column=0, pady=5)
 
         export_btn = ttk.Button(btn_frame, text="开始导出报告", command=self.export_report)
         export_btn.pack(side=tk.LEFT, padx=5)
+
+        choose_dir_btn = ttk.Button(btn_frame, text="选择保存目录", command=self.choose_export_dir)
+        choose_dir_btn.pack(side=tk.LEFT, padx=5)
 
         open_dir_btn = ttk.Button(btn_frame, text="打开质控报告目录", command=self.open_report_dir)
         open_dir_btn.pack(side=tk.LEFT, padx=5)
@@ -1175,12 +1191,14 @@ in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realt
             
     def open_report_dir(self):
         """打开质控报告所在目录：已打开则切换过去，未打开则新建打开"""
-        # 获取导出文件所在目录
-        file_path = self.export_path_var.get()
-        if not file_path:
-            messagebox.showwarning("提示", "未设置导出文件路径")
-            return
-        directory = os.path.dirname(os.path.abspath(file_path))
+        # 获取导出文件所在目录（优先使用 _export_dir，兜底用 export_path_var）
+        directory = self._export_dir if hasattr(self, '_export_dir') else None
+        if not directory:
+            file_path = self.export_path_var.get()
+            if not file_path:
+                messagebox.showwarning("提示", "未设置导出文件路径")
+                return
+            directory = os.path.dirname(os.path.abspath(file_path))
         if not os.path.isdir(directory):
             # 目录不存在，尝试创建后再打开
             try:
@@ -1264,6 +1282,18 @@ in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realt
             # Linux：使用 xdg-open
             import subprocess
             subprocess.Popen(['xdg-open', directory])
+
+    def choose_export_dir(self):
+        """选择报告保存目录"""
+        directory = filedialog.askdirectory(
+            title="选择报告保存目录",
+            initialdir=self._export_dir
+        )
+        if directory:
+            self._export_dir = directory
+            # 重新拼接完整路径
+            filename = self.export_name_var.get()
+            self.export_path_var.set(os.path.join(directory, filename))
 
     def export_report(self):
         """导出报告"""
@@ -1496,10 +1526,32 @@ in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realt
                 
                 self.root.update_idletasks()
                 
+                # 使用用户可写目录 + 文件名组成完整路径
                 export_path = self.export_name_var.get()
-                full_path = os.path.abspath(export_path)
+                full_path = self.export_path_var.get()
                 self.log_message(f"\n保存文件到：{full_path}...\n")
-                wb.save(export_path)
+
+                # 确保目录存在且可写
+                export_dir = os.path.dirname(full_path)
+                try:
+                    os.makedirs(export_dir, exist_ok=True)
+                    # 测试写入权限
+                    test_file = os.path.join(export_dir, '.write_test_tmp')
+                    with open(test_file, 'w') as tf:
+                        tf.write('test')
+                    os.remove(test_file)
+                except Exception:
+                    # 目录不可写，回退到用户文档目录
+                    fallback_dir = os.path.expanduser('~/Documents')
+                    if os.path.isdir(fallback_dir) and os.access(fallback_dir, os.W_OK):
+                        self.log_message(f"  ⚠ 目标目录不可写，回退到：{fallback_dir}\n")
+                        full_path = os.path.join(fallback_dir, export_path)
+                        self._export_dir = fallback_dir
+                        self.export_path_var.set(full_path)
+                    else:
+                        raise Exception(f"导出目录不可写：{export_dir}\n请使用【选择保存目录】按钮指定一个可写的位置")
+
+                wb.save(full_path)
                 
                 self.export_progress.stop()
                 self.export_status_label.config(text="导出状态：完成", foreground="green")
@@ -1507,7 +1559,7 @@ in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realt
                 self.log_message(f"✓ 共处理 {processed}/{total_sheets} 个 Sheet 页\n")
                 
                 # 显示带滚动条的消息框
-                messagebox.showinfo("报告生成","导出成功！")
+                messagebox.showinfo("报告生成", f"导出成功！\n\n文件位置：{full_path}")
                 
             except Exception as e:
                 self.export_progress.stop()

@@ -82,9 +82,9 @@ class ReportGeneratorTool:
         screen_height = root.winfo_screenheight()
 
         if sys.platform == 'darwin':
-            # macOS：占屏幕 70%
-            window_width = int(screen_width * 0.7)
-            window_height = int(screen_height * 0.7)
+            # macOS：固定 940x740
+            window_width = 940
+            window_height = 740
         else:
             # Windows：固定 700x700
             window_width = 700

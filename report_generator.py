@@ -82,9 +82,9 @@ class ReportGeneratorTool:
         screen_height = root.winfo_screenheight()
 
         if sys.platform == 'darwin':
-            # macOS：固定 940x740
-            window_width = 940
-            window_height = 740
+            # macOS：固定 800x700
+            window_width = 880
+            window_height = 700
         else:
             # Windows：固定 700x700
             window_width = 700
@@ -96,7 +96,7 @@ class ReportGeneratorTool:
         self.root.geometry(f"{window_width}x{window_height}+{x}+{y}")
 
         # 允许调整大小（macOS 上必须为 True 才会显示绿色最大化按钮）
-        self.root.resizable(True, True)
+        self.root.resizable(False, False)
 
         # 全局滚动条样式：加宽所有滚动条
         style = ttk.Style()

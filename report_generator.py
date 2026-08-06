@@ -9,6 +9,7 @@ import warnings
 from datetime import datetime
 from copy import copy
 from tkcalendar import Calendar
+from pathlib import Path
 
 # 忽略 pandas 的 DBAPI2 警告
 warnings.filterwarnings('ignore', message='pandas only supports SQLAlchemy')
@@ -18,13 +19,25 @@ VERSION = "V1.8"
 BUILD_DATE = "2026-07-28"
 
 class ReportGeneratorTool:
+
+    @staticmethod
+    def resource_path(relative_path):
+        """获取 PyInstaller 打包后资源的绝对路径"""
+        try:
+            # PyInstaller 打包后的临时目录
+            base_path = sys._MEIPASS
+        except Exception:
+            # 开发环境下的当前目录
+            base_path = os.path.abspath(".")
+        return os.path.join(base_path, relative_path)
+
     def __init__(self, root):
         self.root = root
         self.root.title(f"疾控中心下发报告生成辅助工具 {VERSION} ({BUILD_DATE})")
         
         # 设置窗口大小并居中
-        window_width = 700
-        window_height = 700
+        window_width = 940
+        window_height = 740
         screen_width = root.winfo_screenwidth()
         screen_height = root.winfo_screenheight()
         x = (screen_width - window_width) // 2
@@ -38,7 +51,7 @@ class ReportGeneratorTool:
         style.configure("Vertical.TScrollbar", width=32, arrowsize=24)
         style.configure("Horizontal.TScrollbar", width=32, arrowsize=24)
         
-        self.db_path = "prov_report.db"
+        self.db_path = self.resource_path("prov_report.db")
         self.template_path = None
         self.export_path = None
         self.data_dir = None

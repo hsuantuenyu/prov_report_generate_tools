@@ -49,8 +49,18 @@ def run_pyinstaller():
     print("=" * 60)
     print(f"开始执行 PyInstaller 打包...")
     print(f"操作系统：{platform.system()} {platform.release()}")
-    print(f"Python：{sys.version.split()[0]}")
+    machine = platform.machine()
+    arch_label = machine
+    if sys.platform == 'darwin':
+        if machine.lower() in ('arm64', 'aarch64'):
+            arch_label = f"{machine} (Apple Silicon M1/M2/M3 原生)"
+        elif machine == 'x86_64':
+            arch_label = f"{machine} (Intel / Rosetta)"
+    print(f"CPU 架构：{arch_label}")
+    print(f"Python：{sys.version.split()[0]} ({machine})")
     print(f"PyInstaller：{PYINSTALLER_CMD}")
+    if sys.platform == 'darwin' and machine.lower() in ('arm64', 'aarch64'):
+        print(f"目标产物：原生 arm64 .app 应用包（M2 兼容，无需 Rosetta）")
     print("=" * 60)
 
     cmd = [PYINSTALLER_CMD, "--clean", "--noconfirm", SPEC_FILE]
@@ -59,6 +69,19 @@ def run_pyinstaller():
     result = subprocess.run(cmd, cwd=PROJECT_ROOT)
     if result.returncode != 0:
         raise Exception(f"PyInstaller 打包失败，返回码：{result.returncode}")
+
+    # macOS 构建完成后，自动移除隔离属性（方便分发）
+    if sys.platform == 'darwin':
+        app_name = '疾控中心下发报告生成工具.app'
+        app_path = os.path.join(DIST_DIR, app_name)
+        if os.path.isdir(app_path):
+            try:
+                subprocess.run(['xattr', '-dr', 'com.apple.quarantine', app_path],
+                               capture_output=True, timeout=30)
+                print("\n 已移除 macOS 隔离属性 com.apple.quarantine")
+                print(" 用户双击即可打开 .app，无需右键")
+            except Exception:
+                pass
 
     print("\n PyInstaller 打包完成！\n")
 
@@ -115,6 +138,22 @@ def show_result():
                     size = f" ({size_bytes / 1024:.1f} KB)"
             elif os.path.isdir(item_path) and item.endswith('.app'):
                 size = " (macOS 应用)"
+                # macOS: 尝试读取可执行文件架构信息
+                bin_path = os.path.join(item_path, "Contents", "MacOS", item[:-4])
+                if os.path.isfile(bin_path):
+                    try:
+                        res = subprocess.run(['lipo', '-info', bin_path],
+                                             capture_output=True, text=True, timeout=10)
+                        arch_info = res.stdout.strip()
+                        if 'Non-fat' in arch_info:
+                            if 'arm64' in arch_info:
+                                size = " (Apple Silicon arm64 原生)"
+                            elif 'x86_64' in arch_info:
+                                size = " (Intel x86_64)"
+                        elif 'arm64' in arch_info and 'x86_64' in arch_info:
+                            size = " (Universal2: arm64 + x86_64)"
+                    except Exception:
+                        pass
             print(f"  - {item}{size}")
     print("\n" + "=" * 60)
     print(f"产物路径：{DIST_DIR}")

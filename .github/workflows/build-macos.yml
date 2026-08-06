@@ -3,8 +3,18 @@ name: Build macOS App
 on:
   workflow_dispatch:
     inputs:
+      runner:
+        description: 'macOS Runner（M1/M2 原生推荐 macos-14-xlarge / macos-15-xlarge）'
+        required: true
+        default: 'macos-14'
+        type: choice
+        options:
+          - 'macos-14'
+          - 'macos-14-xlarge'
+          - 'macos-15'
+          - 'macos-15-xlarge'
       python_version:
-        description: 'Python 版本'
+        description: 'Python 版本（ARM64 原生推荐 3.11+）'
         required: true
         default: '3.12'
         type: choice
@@ -13,6 +23,15 @@ on:
           - '3.11'
           - '3.12'
           - '3.13'
+      architecture:
+        description: '目标架构（根据 Runner 自动判断，M2 请选 arm64）'
+        required: true
+        default: 'auto'
+        type: choice
+        options:
+          - 'auto'
+          - 'arm64 (Apple Silicon M1/M2/M3)'
+          - 'universal2 (arm64 + x86_64)'
       upload_artifact:
         description: '上传构建产物到 Artifact'
         required: true
@@ -30,6 +49,16 @@ on:
           - '30'
           - '60'
           - '90'
+      enable_code_sign:
+        description: '启用代码签名（需配置 CERTIFICATE secrets）'
+        required: true
+        default: false
+        type: boolean
+      quarantine_disable:
+        description: '移除 macOS 隔离属性（方便分发，用户无需右键打开）'
+        required: true
+        default: true
+        type: boolean
 
 env:
   PROJECT_NAME: 疾控中心下发报告生成工具
@@ -37,89 +66,187 @@ env:
 
 jobs:
   build-macos:
-    name: Build macOS App
-    runs-on: macos-latest
+    name: Build macOS App (${{ github.event.inputs.runner }})
+    runs-on: ${{ github.event.inputs.runner }}
 
     steps:
       - name: Checkout 源代码
         uses: actions/checkout@v4
 
+      - name: 显示 Runner 硬件信息（CPU / 架构 / 内存）
+        run: |
+          echo "=== 硬件信息 ==="
+          sysctl -n machdep.cpu.brand_string 2>/dev/null || sysctl -n hw.model 2>/dev/null || echo "Apple Silicon"
+          echo "架构: $(uname -m)"
+          echo "CPU 核数: $(sysctl -n hw.ncpu 2>/dev/null || echo n/a)"
+          echo "内存(GB): $(sysctl -n hw.memsize 2>/dev/null | awk '{printf("%.1f", $1/1024/1024/1024)}')"
+          echo ""
+          echo "=== macOS 版本 ==="
+          sw_vers
+          echo ""
+          echo "=== 磁盘空间 ==="
+          df -h /
+          echo ""
+          echo "=== 二进制架构测试 ==="
+          echo "Python 二进制架构:"
+          file /usr/bin/python3 2>/dev/null || true
+
+      - name: 确认 Runner 架构（Apple Silicon arm64）
+        run: |
+          ARCH=$(uname -m)
+          echo "Runner 架构: $ARCH"
+          if [ "$ARCH" = "arm64" ]; then
+            echo "✅ 检测到 Apple Silicon (M1/M2/M3) ARM64 原生 Runner"
+            TARGET_ARCH="arm64"
+          else
+            echo "ℹ️  Intel x86_64 Runner 已检测到"
+            TARGET_ARCH="x86_64"
+          fi
+
+          # 尊重用户手动选择
+          if [ "${{ github.event.inputs.architecture }}" = "universal2 (arm64 + x86_64)" ]; then
+            TARGET_ARCH="universal2"
+            echo "ℹ️  用户指定构建 universal2 双架构"
+          fi
+
+          echo "TARGET_ARCH=$TARGET_ARCH" >> $GITHUB_ENV
+          echo "最终目标架构: $TARGET_ARCH"
+
       - name: 设置 Python ${{ github.event.inputs.python_version }}
         uses: actions/setup-python@v5
         with:
           python-version: ${{ github.event.inputs.python_version }}
+          architecture: ${{ env.TARGET_ARCH == 'universal2' && 'arm64' || (endsWith(env.TARGET_ARCH, 'arm64') && 'arm64' || 'x64') }}
 
-      - name: 显示构建环境信息
+      - name: 验证 Python 与架构匹配
         run: |
-          echo "=== 系统信息 ==="
-          sw_vers
-          echo ""
           echo "=== Python 信息 ==="
           python --version
-          which python
+          echo "Python 路径: $(which python)"
+          echo "Python 二进制架构:"
+          file "$(which python)"
           echo ""
-          echo "=== 当前目录 ==="
-          pwd
-          ls -la
-
-      - name: 安装系统依赖 (Tcl/Tk for tkinter)
-        run: |
-          echo "macOS runner 自带 Tcl/Tk，验证 tkinter 可用性："
-          python -c "import tkinter; print(f'tkinter OK: {tkinter.TkVersion}')" || echo "tkinter 不可用"
+          PYTHON_ARCH=$(python -c "import platform; print(platform.machine())")
+          echo "Python 报告架构: $PYTHON_ARCH"
+          echo ""
+          echo "=== Tcl/Tk (tkinter) 验证 ==="
+          python -c "
+          import tkinter
+          import sys
+          print(f'tkinter 版本: {tkinter.TkVersion}')
+          print(f'Tcl 版本: {tkinter.Tcl().eval(\"info patchlevel\")}')
+          print(f'Python 架构: {sys.platform} {platform.machine() if \"platform\" in dir() else \"\"}')
+          "
 
       - name: 安装 Python 依赖
         run: |
-          python -m pip install --upgrade pip
+          python -m pip install --upgrade pip setuptools wheel
+          echo "=== 安装构建依赖 (duckdb/pandas/openpyxl/tkcalendar/pyinstaller) ==="
           pip install duckdb pandas openpyxl tkcalendar pyinstaller
           echo ""
           echo "=== 已安装依赖版本 ==="
           pip list | grep -iE "duckdb|pandas|openpyxl|tkcalendar|pyinstaller"
+          echo ""
+          echo "=== pyinstaller 架构验证 ==="
+          pyinstaller --version
+          echo "PyInstaller bootloader 架构:"
+          file "$(which pyinstaller)" 2>/dev/null || true
 
-      - name: 运行 macOS 兼容性验证脚本
+      - name: 运行 macOS M2 (ARM64) 兼容性验证脚本
         run: |
-          echo "=== 运行 macOS 兼容性验证 ==="
+          echo "=== 运行 macOS / Apple Silicon 兼容性验证 ==="
           python verify_macos_build.py
-        continue-on-error: false
 
-      - name: 执行构建 (pyinstaller)
+      - name: 执行 PyInstaller 构建（ARM64 原生）
         run: |
-          echo "=== 开始执行 PyInstaller 构建 ==="
+          echo "=== 开始 PyInstaller 构建（目标: ${{ env.TARGET_ARCH }}） ==="
           python build_exe.py
           echo ""
           echo "=== dist 目录内容 ==="
           ls -la "$DIST_DIR/"
           echo ""
-          if [ -d "$DIST_DIR/${PROJECT_NAME}.app" ]; then
+          APP_PATH="$DIST_DIR/${PROJECT_NAME}.app"
+          if [ -d "$APP_PATH" ]; then
             echo ".app 应用包信息:"
-            du -sh "$DIST_DIR/${PROJECT_NAME}.app"
-            ls -la "$DIST_DIR/${PROJECT_NAME}.app/Contents/MacOS/"
+            du -sh "$APP_PATH"
+            echo ""
+            echo "=== Info.plist 检查 ==="
+            /usr/libexec/PlistBuddy -c "Print CFBundleName" "$APP_PATH/Contents/Info.plist" 2>/dev/null || true
+            /usr/libexec/PlistBuddy -c "Print CFBundleExecutable" "$APP_PATH/Contents/Info.plist" 2>/dev/null || true
+            /usr/libexec/PlistBuddy -c "Print CFBundleSupportedPlatforms" "$APP_PATH/Contents/Info.plist" 2>/dev/null || true
+            echo ""
+            echo "=== Contents/MacOS 目录 ==="
+            ls -la "$APP_PATH/Contents/MacOS/"
           else
-            echo "警告：未找到 .app 应用包目录"
+            echo "❌ 错误：未找到 .app 应用包目录"
+            exit 1
           fi
 
-      - name: 验证 .app 可执行文件
+      - name: 验证可执行文件架构（确保是 arm64）
         if: success()
         run: |
           APP_BIN="$DIST_DIR/${PROJECT_NAME}.app/Contents/MacOS/${PROJECT_NAME}"
+          if [ ! -f "$APP_BIN" ]; then
+            APP_BIN_BAK=$(ls "$DIST_DIR/${PROJECT_NAME}.app/Contents/MacOS/" | head -1)
+            if [ -n "$APP_BIN_BAK" ]; then
+              APP_BIN="$DIST_DIR/${PROJECT_NAME}.app/Contents/MacOS/$APP_BIN_BAK"
+            fi
+          fi
+          echo "检查可执行文件: $APP_BIN"
           if [ -f "$APP_BIN" ]; then
-            echo "=== 可执行文件信息 ==="
+            echo ""
+            echo "=== file 命令（确认 Mach-O 架构） ==="
             file "$APP_BIN"
             echo ""
-            echo "=== 可执行文件权限 ==="
-            ls -la "$APP_BIN"
-            chmod +x "$APP_BIN" || true
+            echo "=== lipo -info（列出所有架构切片） ==="
+            lipo -info "$APP_BIN" || true
             echo ""
-            echo "=== 依赖库检查 (otool) ==="
-            otool -L "$APP_BIN" | head -20 || true
+            echo "=== otool -L（依赖库） ==="
+            otool -L "$APP_BIN" | head -25 || true
+            echo ""
+            # 确保执行权限
+            chmod +x "$APP_BIN" || true
+            echo "✅ 可执行文件权限修正: $(ls -la "$APP_BIN" | awk '{print $1}')"
+
+            if [ "${{ env.TARGET_ARCH }}" = "arm64" ]; then
+              if file "$APP_BIN" | grep -q "arm64"; then
+                echo "✅ Apple Silicon arm64 架构验证通过"
+              else
+                echo "❌ 错误：期望 arm64 架构，但实际检测到：$(file "$APP_BIN")"
+                exit 1
+              fi
+            fi
           else
-            echo "未找到可执行文件，跳过验证"
+            echo "❌ 未找到可执行文件"
+            exit 1
           fi
 
-      - name: 打包构建产物 (ZIP)
+      - name: 代码签名（可选）
+        if: inputs.enable_code_sign && success()
+        run: |
+          echo "（预留）代码签名步骤，需配置 DEVELOPER_ID_APPLICATION secrets"
+          echo "跳过代码签名，未配置证书 Secrets。"
+
+      - name: 移除 macOS 隔离属性（方便分发）
+        if: inputs.quarantine_disable && success()
+        run: |
+          APP_PATH="$DIST_DIR/${PROJECT_NAME}.app"
+          if [ -d "$APP_PATH" ]; then
+            echo "=== 移除隔离属性 xattr -dr com.apple.quarantine ==="
+            xattr -dr com.apple.quarantine "$APP_PATH" 2>/dev/null || true
+            echo "隔离属性移除成功（用户双击即可打开，无需右键）"
+          fi
+
+      - name: 打包构建产物 ZIP
         if: inputs.upload_artifact
         run: |
           TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
-          ZIP_NAME="${PROJECT_NAME}_macOS_${TIMESTAMP}.zip"
+          ARCH_LABEL="${{ env.TARGET_ARCH }}"
+          # arm64 加明显 M2 标记
+          if [ "$ARCH_LABEL" = "arm64" ]; then
+            ARCH_LABEL="M2_arm64"
+          fi
+          ZIP_NAME="${PROJECT_NAME}_macOS_${ARCH_LABEL}_${TIMESTAMP}.zip"
           echo "ZIP 文件名: $ZIP_NAME"
           echo "TIMESTAMP=$TIMESTAMP" >> $GITHUB_ENV
           echo "ZIP_NAME=$ZIP_NAME" >> $GITHUB_ENV
@@ -130,26 +257,62 @@ jobs:
           echo ""
           echo "=== ZIP 文件信息 ==="
           ls -lh "$ZIP_NAME"
+          echo "ZIP 条目统计:"
+          unzip -l "$ZIP_NAME" | tail -5
+
+      - name: 生成 Build README（产物说明）
+        if: inputs.upload_artifact
+        run: |
+          cat > build_info.txt <<EOF
+          ${PROJECT_NAME} macOS Build Info
+          ========================================================
+          构建时间: $(date '+%Y-%m-%d %H:%M:%S %Z')
+          Runner OS: $(sw_vers -productName) $(sw_vers -productVersion)
+          Runner 架构: $(uname -m)
+          目标架构: ${{ env.TARGET_ARCH }}
+          Python: $(python --version | awk '{print $2}')
+          PyInstaller: $(pyinstaller --version)
+          duckdb: $(python -c "import duckdb; print(duckdb.__version__)")
+          pandas: $(python -c "import pandas; print(pandas.__version__)")
+          ========================================================
+          首次打开方法:
+            方式1: 双击 .app 直接打开（已移除隔离属性）
+            方式2: 若被阻止，请右键 .app → 打开 → 点击"打开"
+            方式3: 终端执行 xattr -dr com.apple.quarantine "/path/to/${PROJECT_NAME}.app"
+          ========================================================
+          依赖说明:
+            所有 Python 依赖（duckdb/pandas/openpyxl/tkcalendar/tcl/tk）已打包进 .app
+            无需额外安装 Python 环境
+          ========================================================
+          EOF
+          cat build_info.txt
 
       - name: 上传构建产物到 Artifact
         if: inputs.upload_artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.ZIP_NAME }}
-          path: ${{ env.ZIP_NAME }}
+          path: |
+            ${{ env.ZIP_NAME }}
+            build_info.txt
           retention-days: ${{ github.event.inputs.artifact_retention_days }}
           compression-level: 6
 
       - name: 构建完成 - 汇总
         run: |
           echo "========================================"
-          echo "  macOS 构建完成 ✓"
+          echo "  macOS (M2/Apple Silicon) 构建完成 ✓"
           echo "========================================"
           echo "项目名称: $PROJECT_NAME"
-          echo "Runner: macOS latest"
+          echo "Runner: ${{ github.event.inputs.runner }} ($(uname -m))"
+          echo "目标架构: ${{ env.TARGET_ARCH }}"
           echo "Python: ${{ github.event.inputs.python_version }}"
           echo "产物目录: $DIST_DIR/"
           if [ -n "${{ env.ZIP_NAME }}" ]; then
             echo "ZIP 包: ${{ env.ZIP_NAME }}"
           fi
           echo "========================================"
+          echo ""
+          echo "💡 下载说明:"
+          echo "   在 GitHub Actions 页面 → 当前 Run → Summary"
+          echo "   → Artifacts 区域下载 ZIP 包，解压后双击 .app 即可使用"

@@ -17,28 +17,65 @@ warnings.filterwarnings('ignore', message='pandas only supports SQLAlchemy')
 VERSION = "V1.8"
 BUILD_DATE = "2026-07-28"
 
+# 跨平台字体：Windows 用微软雅黑，macOS 用苹方-简
+UI_FONT = '微软雅黑' if sys.platform == 'win32' else 'PingFang SC'
+
+
+def get_resource_dir():
+    """获取资源文件所在目录（兼容 PyInstaller 打包和开发模式）
+    Windows exe: exe 所在目录
+    macOS .app: .app 的同级目录（即 dist 目录，资源文件在此）
+    开发模式: 脚本所在目录
+    """
+    if getattr(sys, 'frozen', False):
+        # PyInstaller 打包模式
+        exe_dir = os.path.dirname(sys.executable)
+        if sys.platform == 'darwin':
+            # macOS .app: sys.executable = xxx.app/Contents/MacOS/xxx
+            # 资源文件在 .app 同级目录，需向上回溯 3 级
+            # MacOS -> Contents -> xxx.app -> dist(资源目录)
+            app_dir = os.path.dirname(os.path.dirname(exe_dir))
+            return os.path.dirname(app_dir)
+        else:
+            # Windows: exe 所在目录即资源目录
+            return exe_dir
+    else:
+        # 开发模式：脚本所在目录
+        return os.path.dirname(os.path.abspath(__file__))
+
+
+def resource_path(filename):
+    """拼接资源文件的绝对路径"""
+    return os.path.join(get_resource_dir(), filename)
+
 class ReportGeneratorTool:
     def __init__(self, root):
         self.root = root
         self.root.title(f"疾控中心下发报告生成辅助工具 {VERSION} ({BUILD_DATE})")
         
-        # 设置窗口大小并居中
-        window_width = 700
-        window_height = 700
+        # 设置窗口大小并居中（macOS 字体/控件更大，需要更大窗口）
+        if sys.platform == 'darwin':
+            window_width = 880
+            window_height = 820
+        else:
+            window_width = 700
+            window_height = 700
         screen_width = root.winfo_screenwidth()
         screen_height = root.winfo_screenheight()
         x = (screen_width - window_width) // 2
         y = (screen_height - window_height) // 2
         self.root.geometry(f"{window_width}x{window_height}+{x}+{y}")
         
-        self.root.resizable(False, False)
+        # 允许调整窗口大小，设置最小尺寸防止控件被截断
+        self.root.minsize(window_width, window_height)
+        self.root.resizable(True, True)
 
         # 全局滚动条样式：加宽所有滚动条
         style = ttk.Style()
         style.configure("Vertical.TScrollbar", width=32, arrowsize=24)
         style.configure("Horizontal.TScrollbar", width=32, arrowsize=24)
         
-        self.db_path = "prov_report.db"
+        self.db_path = resource_path("prov_report.db")
         self.template_path = None
         self.export_path = None
         self.data_dir = None
@@ -81,7 +118,7 @@ class ReportGeneratorTool:
         """显示版本日志弹窗"""
         top = tk.Toplevel(self.root)
         top.title("版本日志")
-        top.geometry("550x450")
+        top.geometry("550x450" if sys.platform == 'win32' else "650x500")
         top.resizable(False, False)
         top.attributes('-topmost', True)
         top.transient(self.root)
@@ -95,7 +132,7 @@ class ReportGeneratorTool:
         top.geometry(f"{width}x{height}+{x}+{y}")
 
         # 标题
-        title_label = ttk.Label(top, text="版本更新日志", font=('微软雅黑', 14, 'bold'))
+        title_label = ttk.Label(top, text="版本更新日志", font=(UI_FONT, 14, 'bold'))
         title_label.pack(pady=(15, 10))
 
         # 带滚动条的文本框
@@ -105,12 +142,12 @@ class ReportGeneratorTool:
         scrollbar = ttk.Scrollbar(text_frame)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
-        text_widget = tk.Text(text_frame, wrap=tk.WORD, yscrollcommand=scrollbar.set, font=('微软雅黑', 10))
+        text_widget = tk.Text(text_frame, wrap=tk.WORD, yscrollcommand=scrollbar.set, font=(UI_FONT, 10))
         text_widget.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.config(command=text_widget.yview)
 
         # 读取版本日志文件
-        log_file = '版本日志.txt'
+        log_file = resource_path('版本日志.txt')
         try:
             if os.path.exists(log_file):
                 with open(log_file, 'r', encoding='utf-8') as f:
@@ -147,7 +184,7 @@ class ReportGeneratorTool:
         flag_frame = ttk.Frame(main_frame)
         flag_frame.grid(row=0, column=0, sticky=tk.W, pady=5)
 
-        flag_label = ttk.Label(flag_frame, text="质控报告生成类别：", font=('微软雅黑', 10, 'bold'))
+        flag_label = ttk.Label(flag_frame, text="质控报告生成类别：", font=(UI_FONT, 10, 'bold'))
         flag_label.pack(side=tk.LEFT, padx=5)
 
         national_radio = ttk.Radiobutton(flag_frame, text="国标", variable=self.national_flag_var, value="national")
@@ -251,7 +288,7 @@ class ReportGeneratorTool:
         range_frame = ttk.Frame(date_frame)
         range_frame.grid(row=0, column=0, sticky=tk.W, pady=(0, 5))
         
-        range_label = ttk.Label(range_frame, text="数据区间:", font=('微软雅黑', 10, 'bold'))
+        range_label = ttk.Label(range_frame, text="数据区间:", font=(UI_FONT, 10, 'bold'))
         range_label.pack(side=tk.LEFT, padx=5)
         
         single_radio = ttk.Radiobutton(range_frame, text="单日", variable=self.date_range_mode, value="single")
@@ -270,10 +307,10 @@ class ReportGeneratorTool:
         self.end_date.set(today)
 
         # 开始日期
-        start_label = ttk.Label(input_frame, text="开始日期:", font=('微软雅黑', 10, 'bold'))
+        start_label = ttk.Label(input_frame, text="开始日期:", font=(UI_FONT, 10, 'bold'))
         start_label.grid(row=0, column=0, padx=5)
 
-        start_date_entry = ttk.Entry(input_frame, textvariable=self.start_date, width=12, font=('微软雅黑', 10), state='readonly')
+        start_date_entry = ttk.Entry(input_frame, textvariable=self.start_date, width=12, font=(UI_FONT, 10), state='readonly')
         start_date_entry.grid(row=0, column=1, padx=5)
 
         start_calendar_btn = ttk.Button(input_frame, text="📅", width=3, command=lambda: self.popup_calendar('start'))
@@ -285,10 +322,10 @@ class ReportGeneratorTool:
         self.end_date_frame = ttk.Frame(input_frame)
         self.end_date_frame.grid(row=0, column=3, padx=5)
 
-        end_label = ttk.Label(self.end_date_frame, text="结束日期:", font=('微软雅黑', 10, 'bold'))
+        end_label = ttk.Label(self.end_date_frame, text="结束日期:", font=(UI_FONT, 10, 'bold'))
         end_label.pack(side=tk.LEFT, padx=5)
 
-        end_date_entry = ttk.Entry(self.end_date_frame, textvariable=self.end_date, width=12, font=('微软雅黑', 10), state='readonly')
+        end_date_entry = ttk.Entry(self.end_date_frame, textvariable=self.end_date, width=12, font=(UI_FONT, 10), state='readonly')
         end_date_entry.pack(side=tk.LEFT, padx=5)
 
         end_calendar_btn = ttk.Button(self.end_date_frame, text="📅", width=3, command=lambda: self.popup_calendar('end'))
@@ -540,7 +577,7 @@ class ReportGeneratorTool:
                 self.process_text.delete(1.0, tk.END)
                 
                 # 从 qzrj_generate_data.sql 文件读取 SQL
-                sql_file = 'prov_generate_data.sql'
+                sql_file = resource_path('prov_generate_data.sql')
                 if not os.path.exists(sql_file):
                     raise Exception(f"找不到 SQL 文件：{sql_file}")
                 
@@ -670,8 +707,8 @@ in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realt
         export_name_entry.grid(row=0, column=1, sticky=(tk.W, tk.E), pady=2)
         export_frame.columnconfigure(1, weight=1)
         
-        # 添加路径显示
-        self.export_path_var = tk.StringVar(value=os.path.abspath(default_name))
+        # 添加路径显示（使用资源目录作为默认导出位置）
+        self.export_path_var = tk.StringVar(value=os.path.join(get_resource_dir(), default_name))
         export_path_label = ttk.Label(export_frame, text="完整路径:")
         export_path_label.grid(row=1, column=0, sticky=tk.W, pady=2)
         
@@ -682,7 +719,7 @@ in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realt
         # 文件名变化时更新路径
         def update_path(*args):
             filename = self.export_name_var.get()
-            self.export_path_var.set(os.path.abspath(filename))
+            self.export_path_var.set(os.path.join(get_resource_dir(), filename))
         
         self.export_name_var.trace('w', update_path)
         
@@ -1428,9 +1465,9 @@ in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realt
                 self.root.update_idletasks()
                 
                 export_path = self.export_name_var.get()
-                full_path = os.path.abspath(export_path)
+                full_path = os.path.join(get_resource_dir(), export_path)
                 self.log_message(f"\n保存文件到：{full_path}...\n")
-                wb.save(export_path)
+                wb.save(full_path)
                 
                 self.export_progress.stop()
                 self.export_status_label.config(text="导出状态：完成", foreground="green")

@@ -17,28 +17,97 @@ warnings.filterwarnings('ignore', message='pandas only supports SQLAlchemy')
 VERSION = "V1.8"
 BUILD_DATE = "2026-07-28"
 
+
+def get_app_base_dir():
+    """
+    获取应用所在的基准目录（用于查找 prov_report.db、SQL 文件、模板等同级资源）。
+    - 开发模式：返回脚本所在目录
+    - PyInstaller 打包（Windows exe）：返回 exe 所在目录
+    - PyInstaller 打包（macOS .app）：返回 .app 所在目录（即 dist/ 目录）
+      因为 .app 结构为 AppName.app/Contents/MacOS/AppName，需要往上走 3 级
+    """
+    if getattr(sys, 'frozen', False):
+        # 打包后的环境
+        if sys.platform == 'darwin':
+            # macOS: sys.executable = xxx.app/Contents/MacOS/AppName
+            # 上三级目录 = .app 所在目录（dist/）
+            exe_dir = os.path.dirname(sys.executable)          # Contents/MacOS
+            contents_dir = os.path.dirname(exe_dir)            # Contents
+            app_dir = os.path.dirname(contents_dir)            # xxx.app 目录
+            base_dir = os.path.dirname(app_dir)                # .app 所在目录
+            return base_dir
+        else:
+            # Windows: sys.executable = xxx.exe，返回 exe 所在目录
+            return os.path.dirname(sys.executable)
+    else:
+        # 开发模式：返回脚本所在目录
+        return os.path.dirname(os.path.abspath(__file__))
+
+
+def resource_path(relative_path):
+    """
+    解析资源文件路径：
+    1) 先尝试从 APP_BASE_DIR 查找（dist/ 下与 .app/exe 同级的资源文件）
+    2) 再尝试从 _MEIPASS 查找（PyInstaller 内嵌的资源）
+    3) 最后回退到脚本目录
+    返回绝对路径。
+    """
+    base_dir = get_app_base_dir()
+    candidate = os.path.join(base_dir, relative_path)
+    if os.path.exists(candidate):
+        return candidate
+    # 查找 PyInstaller 临时目录中的资源（如果有）
+    if getattr(sys, '_MEIPASS', None):
+        meipass_candidate = os.path.join(sys._MEIPASS, relative_path)
+        if os.path.exists(meipass_candidate):
+            return meipass_candidate
+    # 回退：脚本目录
+    dev_candidate = os.path.join(os.path.dirname(os.path.abspath(__file__)), relative_path)
+    if os.path.exists(dev_candidate):
+        return dev_candidate
+    # 都找不到就返回基于 base_dir 的路径（调用方会自己判断 exists）
+    return candidate
+
+
 class ReportGeneratorTool:
     def __init__(self, root):
         self.root = root
         self.root.title(f"疾控中心下发报告生成辅助工具 {VERSION} ({BUILD_DATE})")
-        
-        # 设置窗口大小并居中
-        window_width = 700
-        window_height = 700
+
+        # 确定基准目录
+        self.app_base_dir = get_app_base_dir()
+
+        # ===== 窗口大小：最大化 / 占据屏幕 90% =====
         screen_width = root.winfo_screenwidth()
         screen_height = root.winfo_screenheight()
+        # macOS 上 ttk 不支持 zoomed 属性，改为占屏幕 90%
+        window_width = int(screen_width * 0.9)
+        window_height = int(screen_height * 0.9)
         x = (screen_width - window_width) // 2
         y = (screen_height - window_height) // 2
         self.root.geometry(f"{window_width}x{window_height}+{x}+{y}")
-        
-        self.root.resizable(False, False)
+
+        # 允许调整大小
+        self.root.resizable(True, True)
+
+        # 若是 macOS，尝试最大化（部分 Tk 版本支持）
+        if sys.platform == 'darwin':
+            try:
+                self.root.attributes('-zoomed', True)
+            except Exception:
+                pass
 
         # 全局滚动条样式：加宽所有滚动条
         style = ttk.Style()
         style.configure("Vertical.TScrollbar", width=32, arrowsize=24)
         style.configure("Horizontal.TScrollbar", width=32, arrowsize=24)
-        
-        self.db_path = "prov_report.db"
+
+        # 资源文件使用绝对路径（解决 .app 双击启动时工作目录不对的问题）
+        self.db_path = resource_path("prov_report.db")
+        self.sql_file_path = resource_path("prov_generate_data.sql")
+        self.version_log_path = resource_path("版本日志.txt")
+        self.default_template_path = resource_path("疾控下发汇总报告模板.xlsx")
+
         self.template_path = None
         self.export_path = None
         self.data_dir = None
@@ -109,8 +178,8 @@ class ReportGeneratorTool:
         text_widget.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.config(command=text_widget.yview)
 
-        # 读取版本日志文件
-        log_file = '版本日志.txt'
+        # 读取版本日志文件（使用绝对路径）
+        log_file = self.version_log_path
         try:
             if os.path.exists(log_file):
                 with open(log_file, 'r', encoding='utf-8') as f:
@@ -538,15 +607,15 @@ class ReportGeneratorTool:
             try:
                 self.process_status_label.config(text="加工状态：执行中...", foreground="orange")
                 self.process_text.delete(1.0, tk.END)
-                
-                # 从 qzrj_generate_data.sql 文件读取 SQL
-                sql_file = 'prov_generate_data.sql'
+
+                # 从 prov_generate_data.sql 文件读取 SQL（使用绝对路径）
+                sql_file = self.sql_file_path
                 if not os.path.exists(sql_file):
                     raise Exception(f"找不到 SQL 文件：{sql_file}")
-                
+
                 with open(sql_file, 'r', encoding='utf-8') as f:
                     sql_content = f.read()
-                
+
                 # 根据选择动态修改SQL
                 if self.national_flag_var.get() == "all":
                     # 选择"全部"时，移除所有 national_flag='1' 的条件
@@ -554,7 +623,7 @@ class ReportGeneratorTool:
                     sql_content = sql_content.replace("and c.national_flag = '1'", "")
                     sql_content = sql_content.replace("and b.national_flag = '1'", "")
                     sql_content = sql_content.replace("and c.national_flag='1'", "")
-                
+
                 self.process_text.insert(tk.END, f"执行 SQL 脚本：{sql_file}\n\n")
                 
                 conn = duckdb.connect(self.db_path)

@@ -26,7 +26,13 @@ a = Analysis(
     ['report_generator.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[
+        # 将资源文件打包到 .app/exe 内部，避免移动后找不到
+        ('prov_report.db', '.'),
+        ('prov_generate_data.sql', '.'),
+        ('疾控下发汇总报告模板.xlsx', '.'),
+        ('版本日志.txt', '.'),
+    ],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

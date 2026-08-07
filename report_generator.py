@@ -4,6 +4,7 @@ import duckdb
 import pandas as pd
 import os
 import sys
+import shutil
 import threading
 import warnings
 from datetime import datetime
@@ -46,27 +47,80 @@ def get_app_base_dir():
 
 def resource_path(relative_path):
     """
-    解析资源文件路径：
-    1) 先尝试从 APP_BASE_DIR 查找（dist/ 下与 .app/exe 同级的资源文件）
-    2) 再尝试从 _MEIPASS 查找（PyInstaller 内嵌的资源）
+    解析只读资源文件路径（SQL 文件、模板等不需要写入的文件）：
+    1) 优先从 _MEIPASS 查找（PyInstaller 打包到 .app/exe 内部的资源）
+    2) 再尝试从 APP_BASE_DIR 查找（dist/ 下与 .app/exe 同级的外部资源）
     3) 最后回退到脚本目录
-    返回绝对路径。
     """
-    base_dir = get_app_base_dir()
-    candidate = os.path.join(base_dir, relative_path)
-    if os.path.exists(candidate):
-        return candidate
-    # 查找 PyInstaller 临时目录中的资源（如果有）
     if getattr(sys, '_MEIPASS', None):
         meipass_candidate = os.path.join(sys._MEIPASS, relative_path)
         if os.path.exists(meipass_candidate):
             return meipass_candidate
-    # 回退：脚本目录
+    base_dir = get_app_base_dir()
+    candidate = os.path.join(base_dir, relative_path)
+    if os.path.exists(candidate):
+        return candidate
     dev_candidate = os.path.join(os.path.dirname(os.path.abspath(__file__)), relative_path)
     if os.path.exists(dev_candidate):
         return dev_candidate
-    # 都找不到就返回基于 base_dir 的路径（调用方会自己判断 exists）
     return candidate
+
+
+def get_user_data_dir():
+    """
+    获取用户可写数据目录（用于存放需要写入的文件，如 prov_report.db）。
+    - macOS 打包后: ~/Library/Application Support/疾控中心下发报告生成工具/
+    - 其他情况: 应用基准目录
+    """
+    if sys.platform == 'darwin' and getattr(sys, 'frozen', False):
+        data_dir = os.path.expanduser('~/Library/Application Support/疾控中心下发报告生成工具')
+        os.makedirs(data_dir, exist_ok=True)
+        return data_dir
+    else:
+        return get_app_base_dir()
+
+
+def get_db_path():
+    """
+    获取数据库路径。
+    数据库需要写入权限，因此 macOS 上放在用户可写目录。
+    首次启动时从打包资源中复制初始数据库到用户目录。
+    """
+    db_filename = "prov_report.db"
+    user_dir = get_user_data_dir()
+    user_db = os.path.join(user_dir, db_filename)
+
+    # 如果用户目录中已有数据库，直接使用
+    if os.path.exists(user_db):
+        return user_db
+
+    # 首次启动：查找源数据库并复制到用户目录
+    source_db = None
+    # 优先从 _MEIPASS 查找（打包到 .app 内部的数据库）
+    if getattr(sys, '_MEIPASS', None):
+        meipass_db = os.path.join(sys._MEIPASS, db_filename)
+        if os.path.exists(meipass_db):
+            source_db = meipass_db
+    # 其次从外部目录查找
+    if not source_db:
+        external_db = os.path.join(get_app_base_dir(), db_filename)
+        if os.path.exists(external_db):
+            source_db = external_db
+    # 最后从开发目录查找
+    if not source_db:
+        dev_db = os.path.join(os.path.dirname(os.path.abspath(__file__)), db_filename)
+        if os.path.exists(dev_db):
+            source_db = dev_db
+
+    if source_db:
+        try:
+            shutil.copy2(source_db, user_db)
+            return user_db
+        except Exception:
+            return source_db
+
+    # 没有找到源数据库，直接返回用户目录路径（DuckDB 会自动创建空库）
+    return user_db
 
 
 class ReportGeneratorTool:
@@ -135,8 +189,10 @@ class ReportGeneratorTool:
             style.configure("Vertical.TScrollbar", width=32, arrowsize=24)
             style.configure("Horizontal.TScrollbar", width=32, arrowsize=24)
 
-        # 资源文件使用绝对路径（解决 .app 双击启动时工作目录不对的问题）
-        self.db_path = resource_path("prov_report.db")
+        # 资源文件路径解析
+        # 数据库需要写入权限 → 用户可写目录（macOS: ~/Library/Application Support/）
+        self.db_path = get_db_path()
+        # 只读资源 → 优先从 _MEIPASS（.app 内部）读取
         self.sql_file_path = resource_path("prov_generate_data.sql")
         self.version_log_path = resource_path("版本日志.txt")
         self.default_template_path = resource_path("疾控下发汇总报告模板.xlsx")

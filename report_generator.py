@@ -25,6 +25,22 @@ BUILD_DATE = "2026-07-28"
 _FROZEN = getattr(sys, 'frozen', False)
 _RESOURCE_DIR = sys._MEIPASS if _FROZEN else os.path.dirname(os.path.abspath(__file__))
 
+# 数据库完整性检查：必须存在的关键表（缺少任何一个视为数据库损坏）
+_REQUIRED_TABLES = ['org_list']
+
+
+def _is_db_valid(db_path):
+    """检查数据库是否包含关键表，防止使用空壳/损坏的数据库文件。"""
+    try:
+        conn = duckdb.connect(db_path)
+        existing_tables = [row[0] for row in conn.execute(
+            "SELECT table_name FROM information_schema.tables WHERE table_schema='main'"
+        ).fetchall()]
+        conn.close()
+        return all(t in existing_tables for t in _REQUIRED_TABLES)
+    except Exception:
+        return False
+
 
 def resolve_resource(filename):
     """解析只读资源文件路径（SQL 文件、模板等不需要写入的文件）"""
@@ -39,32 +55,42 @@ def get_writable_db_path(db_name):
       2. 检查 .app/exe 同级的 data/ 子目录
       3. 回退到用户数据目录（macOS: ~/Library/Application Support/）
     每一步都会测试写权限，确保目标目录可写。
+    发现数据库文件时会验证表完整性（排除空壳/损坏文件）。
     """
     if _FROZEN:
         if sys.platform == 'darwin':
-            # sys.executable = .app/Contents/MacOS/可执行文件名
             exe_dir = os.path.dirname(sys.executable)
             app_contents_dir = os.path.dirname(exe_dir)       # Contents/
             app_bundle_dir = os.path.dirname(app_contents_dir)  # .app/
-            # .app 同级目录 = dist/（build_exe.py 复制文件的位置）
             sibling_dir = os.path.dirname(app_bundle_dir)
         else:
             sibling_dir = os.path.dirname(sys.executable)
 
-        # 1. 优先检查 .app/exe 同级目录是否已有数据库
+        # 1. 优先检查 .app/exe 同级目录是否已有有效数据库
         candidate = os.path.join(sibling_dir, db_name)
-        if os.path.exists(candidate):
+        if os.path.exists(candidate) and _is_db_valid(candidate):
             return candidate
+
+        # 如果文件存在但无效（空壳/损坏），删除以便后续步骤重新复制
+        if os.path.exists(candidate):
+            try:
+                os.remove(candidate)
+            except Exception:
+                pass
 
         # 2. 检查 .app/exe 同级的 data/ 子目录
         data_dir = os.path.join(sibling_dir, 'data')
         if os.path.isdir(data_dir):
             candidate = os.path.join(data_dir, db_name)
-            if os.path.exists(candidate):
+            if os.path.exists(candidate) and _is_db_valid(candidate):
                 return candidate
+            if os.path.exists(candidate):
+                try:
+                    os.remove(candidate)
+                except Exception:
+                    pass
 
         # 3. 以上都没有，创建可写副本
-        # 确保 data 目录可写
         try:
             os.makedirs(data_dir, exist_ok=True)
             test_file = os.path.join(data_dir, '.write_test')
@@ -96,6 +122,14 @@ def get_writable_db_path(db_name):
         # 开发模式：直接在脚本所在目录操作
         script_dir = os.path.dirname(os.path.abspath(__file__))
         dev_path = os.path.join(script_dir, db_name)
+        # 如果开发目录的数据库无效，尝试从资源目录复制
+        if os.path.exists(dev_path) and not _is_db_valid(dev_path):
+            resource_db = os.path.join(_RESOURCE_DIR, db_name)
+            if os.path.exists(resource_db):
+                try:
+                    shutil.copy2(resource_db, dev_path)
+                except Exception:
+                    pass
         try:
             test_file = os.path.join(script_dir, '.write_test')
             with open(test_file, 'w') as f:

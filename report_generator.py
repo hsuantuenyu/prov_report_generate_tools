@@ -19,108 +19,96 @@ VERSION = "V1.8"
 BUILD_DATE = "2026-07-28"
 
 
-def get_app_base_dir():
+# ===== 跨平台路径解析（参照 qzrj 项目方案）=====
+# PyInstaller 打包后，sys._MEIPASS 指向临时解压目录（只读）
+# 开发模式下，资源文件在脚本所在目录
+_FROZEN = getattr(sys, 'frozen', False)
+_RESOURCE_DIR = sys._MEIPASS if _FROZEN else os.path.dirname(os.path.abspath(__file__))
+
+
+def resolve_resource(filename):
+    """解析只读资源文件路径（SQL 文件、模板等不需要写入的文件）"""
+    return os.path.join(_RESOURCE_DIR, filename)
+
+
+def get_writable_db_path(db_name):
+    """获取可写的数据库路径。
+    macOS .app 包内的资源是只读的，需要将数据库复制到可写位置。
+    采用三级回退策略：
+      1. 优先检查 .app/exe 同级目录（build_exe.py 复制的文件位置）
+      2. 检查 .app/exe 同级的 data/ 子目录
+      3. 回退到用户数据目录（macOS: ~/Library/Application Support/）
+    每一步都会测试写权限，确保目标目录可写。
     """
-    获取应用所在的基准目录（用于查找 prov_report.db、SQL 文件、模板等同级资源）。
-    - 开发模式：返回脚本所在目录
-    - PyInstaller 打包（Windows exe）：返回 exe 所在目录
-    - PyInstaller 打包（macOS .app）：返回 .app 所在目录（即 dist/ 目录）
-      因为 .app 结构为 AppName.app/Contents/MacOS/AppName，需要往上走 3 级
-    """
-    if getattr(sys, 'frozen', False):
-        # 打包后的环境
+    if _FROZEN:
         if sys.platform == 'darwin':
-            # macOS: sys.executable = xxx.app/Contents/MacOS/AppName
-            # 上三级目录 = .app 所在目录（dist/）
-            exe_dir = os.path.dirname(sys.executable)          # Contents/MacOS
-            contents_dir = os.path.dirname(exe_dir)            # Contents
-            app_dir = os.path.dirname(contents_dir)            # xxx.app 目录
-            base_dir = os.path.dirname(app_dir)                # .app 所在目录
-            return base_dir
+            # sys.executable = .app/Contents/MacOS/可执行文件名
+            exe_dir = os.path.dirname(sys.executable)
+            app_contents_dir = os.path.dirname(exe_dir)       # Contents/
+            app_bundle_dir = os.path.dirname(app_contents_dir)  # .app/
+            # .app 同级目录 = dist/（build_exe.py 复制文件的位置）
+            sibling_dir = os.path.dirname(app_bundle_dir)
         else:
-            # Windows: sys.executable = xxx.exe，返回 exe 所在目录
-            return os.path.dirname(sys.executable)
-    else:
-        # 开发模式：返回脚本所在目录
-        return os.path.dirname(os.path.abspath(__file__))
+            sibling_dir = os.path.dirname(sys.executable)
 
+        # 1. 优先检查 .app/exe 同级目录是否已有数据库
+        candidate = os.path.join(sibling_dir, db_name)
+        if os.path.exists(candidate):
+            return candidate
 
-def resource_path(relative_path):
-    """
-    解析只读资源文件路径（SQL 文件、模板等不需要写入的文件）：
-    1) 优先从 _MEIPASS 查找（PyInstaller 打包到 .app/exe 内部的资源）
-    2) 再尝试从 APP_BASE_DIR 查找（dist/ 下与 .app/exe 同级的外部资源）
-    3) 最后回退到脚本目录
-    """
-    if getattr(sys, '_MEIPASS', None):
-        meipass_candidate = os.path.join(sys._MEIPASS, relative_path)
-        if os.path.exists(meipass_candidate):
-            return meipass_candidate
-    base_dir = get_app_base_dir()
-    candidate = os.path.join(base_dir, relative_path)
-    if os.path.exists(candidate):
-        return candidate
-    dev_candidate = os.path.join(os.path.dirname(os.path.abspath(__file__)), relative_path)
-    if os.path.exists(dev_candidate):
-        return dev_candidate
-    return candidate
+        # 2. 检查 .app/exe 同级的 data/ 子目录
+        data_dir = os.path.join(sibling_dir, 'data')
+        if os.path.isdir(data_dir):
+            candidate = os.path.join(data_dir, db_name)
+            if os.path.exists(candidate):
+                return candidate
 
-
-def get_user_data_dir():
-    """
-    获取用户可写数据目录（用于存放需要写入的文件，如 prov_report.db）。
-    - macOS 打包后: ~/Library/Application Support/疾控中心下发报告生成工具/
-    - 其他情况: 应用基准目录
-    """
-    if sys.platform == 'darwin' and getattr(sys, 'frozen', False):
-        data_dir = os.path.expanduser('~/Library/Application Support/疾控中心下发报告生成工具')
-        os.makedirs(data_dir, exist_ok=True)
-        return data_dir
-    else:
-        return get_app_base_dir()
-
-
-def get_db_path():
-    """
-    获取数据库路径。
-    数据库需要写入权限，因此 macOS 上放在用户可写目录。
-    首次启动时从打包资源中复制初始数据库到用户目录。
-    """
-    db_filename = "prov_report.db"
-    user_dir = get_user_data_dir()
-    user_db = os.path.join(user_dir, db_filename)
-
-    # 如果用户目录中已有数据库，直接使用
-    if os.path.exists(user_db):
-        return user_db
-
-    # 首次启动：查找源数据库并复制到用户目录
-    source_db = None
-    # 优先从 _MEIPASS 查找（打包到 .app 内部的数据库）
-    if getattr(sys, '_MEIPASS', None):
-        meipass_db = os.path.join(sys._MEIPASS, db_filename)
-        if os.path.exists(meipass_db):
-            source_db = meipass_db
-    # 其次从外部目录查找
-    if not source_db:
-        external_db = os.path.join(get_app_base_dir(), db_filename)
-        if os.path.exists(external_db):
-            source_db = external_db
-    # 最后从开发目录查找
-    if not source_db:
-        dev_db = os.path.join(os.path.dirname(os.path.abspath(__file__)), db_filename)
-        if os.path.exists(dev_db):
-            source_db = dev_db
-
-    if source_db:
+        # 3. 以上都没有，创建可写副本
+        # 确保 data 目录可写
         try:
-            shutil.copy2(source_db, user_db)
-            return user_db
-        except Exception:
-            return source_db
+            os.makedirs(data_dir, exist_ok=True)
+            test_file = os.path.join(data_dir, '.write_test')
+            with open(test_file, 'w') as f:
+                f.write('test')
+            os.remove(test_file)
+        except (PermissionError, OSError):
+            # 回退到用户数据目录
+            if sys.platform == 'darwin':
+                data_dir = os.path.join(
+                    os.path.expanduser('~/Library/Application Support/疾控中心下发报告生成工具'),
+                    'data'
+                )
+            else:
+                data_dir = os.path.join(
+                    os.path.expanduser('~'), '.疾控中心下发报告生成工具', 'data'
+                )
+            os.makedirs(data_dir, exist_ok=True)
 
-    # 没有找到源数据库，直接返回用户目录路径（DuckDB 会自动创建空库）
-    return user_db
+        writable_path = os.path.join(data_dir, db_name)
+
+        # 从 PyInstaller 包内复制数据库到可写位置
+        resource_db = os.path.join(_RESOURCE_DIR, db_name)
+        if not os.path.exists(writable_path) and os.path.exists(resource_db):
+            shutil.copy2(resource_db, writable_path)
+
+        return writable_path
+    else:
+        # 开发模式：直接在脚本所在目录操作
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        dev_path = os.path.join(script_dir, db_name)
+        try:
+            test_file = os.path.join(script_dir, '.write_test')
+            with open(test_file, 'w') as f:
+                f.write('test')
+            os.remove(test_file)
+            return dev_path
+        except (PermissionError, OSError):
+            data_dir = os.path.join(os.path.expanduser('~'), '.疾控中心下发报告生成工具')
+            os.makedirs(data_dir, exist_ok=True)
+            writable_path = os.path.join(data_dir, db_name)
+            if not os.path.exists(writable_path) and os.path.exists(dev_path):
+                shutil.copy2(dev_path, writable_path)
+            return writable_path
 
 
 class ReportGeneratorTool:
@@ -129,7 +117,7 @@ class ReportGeneratorTool:
         self.root.title(f"疾控中心下发报告生成辅助工具 {VERSION} ({BUILD_DATE})")
 
         # 确定基准目录
-        self.app_base_dir = get_app_base_dir()
+        self.app_base_dir = _RESOURCE_DIR
 
         # ===== 窗口大小 =====
         screen_width = root.winfo_screenwidth()
@@ -190,12 +178,12 @@ class ReportGeneratorTool:
             style.configure("Horizontal.TScrollbar", width=32, arrowsize=24)
 
         # 资源文件路径解析
-        # 数据库需要写入权限 → 用户可写目录（macOS: ~/Library/Application Support/）
-        self.db_path = get_db_path()
-        # 只读资源 → 优先从 _MEIPASS（.app 内部）读取
-        self.sql_file_path = resource_path("prov_generate_data.sql")
-        self.version_log_path = resource_path("版本日志.txt")
-        self.default_template_path = resource_path("疾控下发汇总报告模板.xlsx")
+        # 数据库需要写入权限 → 三级回退策略定位可写路径
+        self.db_path = get_writable_db_path("prov_report.db")
+        # 只读资源 → 从 _RESOURCE_DIR（PyInstaller 包内或脚本目录）读取
+        self.sql_file_path = resolve_resource("prov_generate_data.sql")
+        self.version_log_path = resolve_resource("版本日志.txt")
+        self.default_template_path = resolve_resource("疾控下发汇总报告模板.xlsx")
 
         self.template_path = None
         self.export_path = None

@@ -960,7 +960,7 @@ in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realt
         search_label.pack(side=tk.LEFT, padx=5)
 
         self.org_search_var = tk.StringVar()
-        search_entry = ttk.Entry(search_frame, textvariable=self.org_search_var, width=50)
+        search_entry = ttk.Entry(search_frame, textvariable=self.org_search_var, width=25)
         search_entry.pack(side=tk.LEFT, padx=5)
 
         # 点击搜索框自动清空

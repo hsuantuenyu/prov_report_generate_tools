@@ -4,7 +4,6 @@ import duckdb
 import pandas as pd
 import os
 import sys
-import shutil
 import threading
 import warnings
 from datetime import datetime
@@ -21,98 +20,53 @@ BUILD_DATE = "2026-07-28"
 
 def get_app_base_dir():
     """
-    获取应用所在的基准目录（用于查找与 .app/exe 同级的外部资源文件）。
+    获取应用所在的基准目录（用于查找 prov_report.db、SQL 文件、模板等同级资源）。
     - 开发模式：返回脚本所在目录
     - PyInstaller 打包（Windows exe）：返回 exe 所在目录
-    - PyInstaller 打包（macOS .app）：返回 .app 所在目录
+    - PyInstaller 打包（macOS .app）：返回 .app 所在目录（即 dist/ 目录）
+      因为 .app 结构为 AppName.app/Contents/MacOS/AppName，需要往上走 3 级
     """
     if getattr(sys, 'frozen', False):
+        # 打包后的环境
         if sys.platform == 'darwin':
+            # macOS: sys.executable = xxx.app/Contents/MacOS/AppName
+            # 上三级目录 = .app 所在目录（dist/）
             exe_dir = os.path.dirname(sys.executable)          # Contents/MacOS
             contents_dir = os.path.dirname(exe_dir)            # Contents
             app_dir = os.path.dirname(contents_dir)            # xxx.app 目录
             base_dir = os.path.dirname(app_dir)                # .app 所在目录
             return base_dir
         else:
+            # Windows: sys.executable = xxx.exe，返回 exe 所在目录
             return os.path.dirname(sys.executable)
     else:
+        # 开发模式：返回脚本所在目录
         return os.path.dirname(os.path.abspath(__file__))
-
-
-def get_user_data_dir():
-    """
-    获取用户可写数据目录（用于存放需要写入的文件，如 prov_report.db）。
-    - macOS: ~/Library/Application Support/疾控中心下发报告生成工具/
-    - Windows: exe 同级目录（保持兼容）
-    - 开发模式: 脚本所在目录
-    """
-    if sys.platform == 'darwin' and getattr(sys, 'frozen', False):
-        data_dir = os.path.expanduser('~/Library/Application Support/疾控中心下发报告生成工具')
-        os.makedirs(data_dir, exist_ok=True)
-        return data_dir
-    else:
-        return get_app_base_dir()
 
 
 def resource_path(relative_path):
     """
-    解析只读资源文件路径（SQL 文件、模板等）：
-    1) 先尝试从 _MEIPASS 查找（PyInstaller 打包到 .app/exe 内部的资源）
-    2) 再尝试从 APP_BASE_DIR 查找（dist/ 下与 .app/exe 同级的外部资源）
+    解析资源文件路径：
+    1) 先尝试从 APP_BASE_DIR 查找（dist/ 下与 .app/exe 同级的资源文件）
+    2) 再尝试从 _MEIPASS 查找（PyInstaller 内嵌的资源）
     3) 最后回退到脚本目录
+    返回绝对路径。
     """
-    if getattr(sys, '_MEIPASS', None):
-        meipass_candidate = os.path.join(sys._MEIPASS, relative_path)
-        if os.path.exists(meipass_candidate):
-            return meipass_candidate
     base_dir = get_app_base_dir()
     candidate = os.path.join(base_dir, relative_path)
     if os.path.exists(candidate):
         return candidate
+    # 查找 PyInstaller 临时目录中的资源（如果有）
+    if getattr(sys, '_MEIPASS', None):
+        meipass_candidate = os.path.join(sys._MEIPASS, relative_path)
+        if os.path.exists(meipass_candidate):
+            return meipass_candidate
+    # 回退：脚本目录
     dev_candidate = os.path.join(os.path.dirname(os.path.abspath(__file__)), relative_path)
     if os.path.exists(dev_candidate):
         return dev_candidate
+    # 都找不到就返回基于 base_dir 的路径（调用方会自己判断 exists）
     return candidate
-
-
-def get_db_path():
-    """
-    获取数据库路径。
-    数据库需要写入权限，因此 macOS 上放在 ~/Library/Application Support/ 下。
-    首次启动时从打包资源中复制初始数据库到用户目录。
-    """
-    db_filename = "prov_report.db"
-    user_dir = get_user_data_dir()
-    user_db = os.path.join(user_dir, db_filename)
-
-    # 如果用户目录中已有数据库，直接使用
-    if os.path.exists(user_db):
-        return user_db
-
-    # 首次启动：从打包资源中复制初始数据库
-    # 查找源数据库（_MEIPASS → 外部目录 → 脚本目录）
-    source_db = None
-    if getattr(sys, '_MEIPASS', None):
-        meipass_db = os.path.join(sys._MEIPASS, db_filename)
-        if os.path.exists(meipass_db):
-            source_db = meipass_db
-    if not source_db:
-        external_db = os.path.join(get_app_base_dir(), db_filename)
-        if os.path.exists(external_db):
-            source_db = external_db
-    if not source_db:
-        dev_db = os.path.join(os.path.dirname(os.path.abspath(__file__)), db_filename)
-        if os.path.exists(dev_db):
-            source_db = dev_db
-
-    if source_db:
-        try:
-            shutil.copy2(source_db, user_db)
-        except Exception:
-            # 复制失败则直接使用源路径（只读模式下部分功能可能受限）
-            return source_db
-
-    return user_db
 
 
 class ReportGeneratorTool:
@@ -128,9 +82,9 @@ class ReportGeneratorTool:
         screen_height = root.winfo_screenheight()
 
         if sys.platform == 'darwin':
-            # macOS：固定 720x650
-            window_width = 720
-            window_height = 650
+            # macOS：固定 700x660
+            window_width = 700
+            window_height = 660
         else:
             # Windows：固定 700x700
             window_width = 700
@@ -145,6 +99,7 @@ class ReportGeneratorTool:
         self.root.resizable(False, False)
 
         # ===== ttk 主题与样式 =====
+        # 全局滚动条样式
         style = ttk.Style()
 
         if sys.platform == 'darwin':
@@ -166,7 +121,7 @@ class ReportGeneratorTool:
                 pass
 
             # Aqua 主题大部分样式不可覆盖（是系统原生渲染），
-            # 这里仅配置不会破坏原生外观的值。
+            # 这里仅配置不会破坏原生外观的值。滚动条按 aqua 原生大小（不要配置 width，会破坏原生比例）
             try:
                 style.configure("TFrame", padding=0)
                 style.configure("TLabel", padding=0)
@@ -180,10 +135,8 @@ class ReportGeneratorTool:
             style.configure("Vertical.TScrollbar", width=32, arrowsize=24)
             style.configure("Horizontal.TScrollbar", width=32, arrowsize=24)
 
-        # 资源文件路径解析
-        # 数据库需要写入权限 → 用户可写目录（macOS: ~/Library/Application Support/）
-        self.db_path = get_db_path()
-        # 只读资源 → 从 _MEIPASS 或外部目录读取
+        # 资源文件使用绝对路径（解决 .app 双击启动时工作目录不对的问题）
+        self.db_path = resource_path("prov_report.db")
         self.sql_file_path = resource_path("prov_generate_data.sql")
         self.version_log_path = resource_path("版本日志.txt")
         self.default_template_path = resource_path("疾控下发汇总报告模板.xlsx")
@@ -291,8 +244,8 @@ class ReportGeneratorTool:
 
         # macOS 优化：外层 padding 使用对称边距（均匀的左右上下内边距）
         if sys.platform == 'darwin':
-            # clam 主题下设置显式对称 padding: (左, 上, 右, 下)
-            outer_pad = (5, 3, 5, 3)
+            # aqua 主题自带内部 padding，外层只需要很小的边距即可保持美观对称
+            outer_pad = (3, 2, 3, 2)
         else:
             outer_pad = 10
         main_frame = ttk.Frame(self.root, padding=outer_pad)
@@ -322,7 +275,8 @@ class ReportGeneratorTool:
 
         # macOS 上 Tab Frame 用统一的对称 padding: (左,上,右,下)
         if sys.platform == 'darwin':
-            tab_pad = (5, 3, 5, 3)
+            # aqua 主题的 Notebook/Tab 自带较大内部 padding，只需要小值
+            tab_pad = (2, 1, 2, 1)
         else:
             tab_pad = 10
 
@@ -351,7 +305,8 @@ class ReportGeneratorTool:
         """创建数据库测试 Tab"""
         # 左右对称 padding: (左, 上, 右, 下)
         if sys.platform == 'darwin':
-            lf_pad = (4, 3, 4, 3)
+            # aqua 主题原生 LabelFrame 自带漂亮边框与 padding，只需要小内边距
+            lf_pad = (2, 1, 2, 1)
         else:
             lf_pad = 5
         frame = ttk.LabelFrame(parent, text="DuckDB 数据库连接测试", padding=lf_pad)
@@ -412,7 +367,8 @@ class ReportGeneratorTool:
         """创建数据导入 Tab"""
         # 左右对称 padding: (左, 上, 右, 下)
         if sys.platform == 'darwin':
-            lf_pad = (4, 3, 4, 3)
+            # aqua 主题原生 LabelFrame 自带漂亮边框与 padding，只需要小内边距
+            lf_pad = (2, 1, 2, 1)
         else:
             lf_pad = 5
         frame = ttk.LabelFrame(parent, text="数据导入", padding=lf_pad)
@@ -680,7 +636,8 @@ class ReportGeneratorTool:
         """创建数据加工 Tab"""
         # 左右对称 padding: (左, 上, 右, 下)
         if sys.platform == 'darwin':
-            lf_pad = (4, 3, 4, 3)
+            # aqua 主题原生 LabelFrame 自带漂亮边框与 padding，只需要小内边距
+            lf_pad = (2, 1, 2, 1)
         else:
             lf_pad = 5
         frame = ttk.LabelFrame(parent, text="数据加工", padding=lf_pad)
@@ -815,10 +772,11 @@ in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realt
         """创建数据导出 Tab"""
         # 左右对称 padding: (左, 上, 右, 下)
         if sys.platform == 'darwin':
-            lf_pad = (4, 3, 4, 3)
+            # aqua 主题原生 LabelFrame 自带漂亮边框与 padding，只需要小内边距
+            lf_pad = (2, 1, 2, 1)
         else:
             lf_pad = 5
-        inner_pad = (3, 2, 3, 2) if sys.platform == 'darwin' else 5
+        inner_pad = (2, 1, 2, 1) if sys.platform == 'darwin' else 5
         frame = ttk.LabelFrame(parent, text="数据导出", padding=lf_pad)
         frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         parent.columnconfigure(0, weight=1)
@@ -891,11 +849,11 @@ in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realt
         btn_frame = ttk.Frame(frame)
         btn_frame.grid(row=2, column=0, pady=2 if sys.platform == 'darwin' else 5)
 
-        export_btn = ttk.Button(btn_frame, text="开始导出报告", command=self.export_report)
-        export_btn.pack(side=tk.LEFT, padx=5)
-
         choose_dir_btn = ttk.Button(btn_frame, text="选择保存目录", command=self.choose_export_dir)
         choose_dir_btn.pack(side=tk.LEFT, padx=5)
+
+        export_btn = ttk.Button(btn_frame, text="开始导出报告", command=self.export_report)
+        export_btn.pack(side=tk.LEFT, padx=5)
 
         open_dir_btn = ttk.Button(btn_frame, text="打开质控报告目录", command=self.open_report_dir)
         open_dir_btn.pack(side=tk.LEFT, padx=5)
@@ -928,7 +886,8 @@ in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realt
         """创建机构管理 Tab"""
         # 左右对称 padding: (左, 上, 右, 下)
         if sys.platform == 'darwin':
-            lf_pad = (4, 3, 4, 3)
+            # aqua 主题原生 LabelFrame 自带漂亮边框与 padding，只需要小内边距
+            lf_pad = (2, 1, 2, 1)
         else:
             lf_pad = 5
         frame = ttk.LabelFrame(parent, text="机构管理", padding=lf_pad)

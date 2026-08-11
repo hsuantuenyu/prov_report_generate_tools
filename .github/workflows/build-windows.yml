@@ -89,11 +89,7 @@ jobs:
           Write-Host "Python 架构: $([System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture)"
           Write-Host ""
           Write-Host "=== Tcl/Tk (tkinter) 验证 ==="
-          python -c "
-          import tkinter
-          print(f'tkinter 版本: {tkinter.TkVersion}')
-          print(f'Tcl 版本: {tkinter.Tcl().eval(\"info patchlevel\")}')
-          "
+          python -c "import tkinter; print('tkinter 版本:', tkinter.TkVersion); print('Tcl 版本:', tkinter.Tcl().eval('info patchlevel'))"
 
       - name: 安装 Python 依赖
         run: |
@@ -110,28 +106,7 @@ jobs:
       - name: 运行 Windows 构建兼容性验证
         run: |
           Write-Host "=== 运行构建兼容性检查 ==="
-          # 基础语法和依赖检查
-          python -c "
-          import py_compile
-          import os
-          # 检查 report_generator.py 语法
-          py_compile.compile('report_generator.py', doraise=True)
-          print('report_generator.py 语法检查: OK')
-          # 检查 spec 语法
-          py_compile.compile('report_generator.spec', doraise=True)
-          print('report_generator.spec 语法检查: OK')
-          # 检查关键依赖
-          import duckdb, pandas, openpyxl, tkcalendar, PyInstaller
-          print(f'duckdb: {duckdb.__version__}')
-          print(f'pandas: {pandas.__version__}')
-          print(f'openpyxl: {openpyxl.__version__}')
-          print(f'tkcalendar: OK')
-          print(f'PyInstaller: {PyInstaller.__version__}')
-          # 检查资源文件
-          for f in ['prov_report.db', 'prov_generate_data.sql', '疾控下发汇总报告模板.xlsx', '版本日志.txt', 'file_version_info.txt']:
-              exists = os.path.isfile(f)
-              print(f'{f}: {\"OK\" if exists else \"MISSING\"}')
-          "
+          python verify_build_env.py
 
       - name: 执行 PyInstaller 构建
         run: |

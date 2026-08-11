@@ -8,6 +8,14 @@ import os
 import sys
 import platform
 
+# Windows GitHub Actions Runner 默认 stdout 编码是 cp1252，无法输出中文
+# 强制 UTF-8 输出，避免 UnicodeEncodeError
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+except Exception:
+    pass
+
 
 def _check(desc, cond, detail=""):
     tag = "OK" if cond else "FAIL"

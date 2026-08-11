@@ -241,15 +241,32 @@ jobs:
         if: inputs.upload_artifact
         run: |
           TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+          # 读取版本号（从 report_generator.py 中提取 VERSION）
+          APP_VERSION=$(python -c "
+          import re
+          with open('report_generator.py', 'r', encoding='utf-8') as f:
+              content = f.read()
+          m = re.search(r'VERSION\s*=\s*\"([^\"]+)\"', content)
+          print(m.group(1) if m else 'Unknown')
+          ")
+          echo "应用版本: $APP_VERSION"
+
           ARCH_LABEL="${{ env.TARGET_ARCH }}"
-          # arm64 加明显 M2 标记
           if [ "$ARCH_LABEL" = "arm64" ]; then
-            ARCH_LABEL="M2_arm64"
+            ARCH_LABEL="arm64_M2"
+          elif [ "$ARCH_LABEL" = "universal2" ]; then
+            ARCH_LABEL="universal2"
+          else
+            ARCH_LABEL="x86_64"
           fi
-          ZIP_NAME="${PROJECT_NAME}_macOS_${ARCH_LABEL}_${TIMESTAMP}.zip"
+
+          # 产物命名规范: {PROJECT_NAME}_{VERSION}_macOS_{ARCH}_{TIMESTAMP}.zip
+          ZIP_NAME="${PROJECT_NAME}_${APP_VERSION}_macOS_${ARCH_LABEL}_${TIMESTAMP}.zip"
           echo "ZIP 文件名: $ZIP_NAME"
+          echo "ARTIFACT_NAME=macOS-${ARCH_LABEL}-${APP_VERSION}" >> $GITHUB_ENV
           echo "TIMESTAMP=$TIMESTAMP" >> $GITHUB_ENV
           echo "ZIP_NAME=$ZIP_NAME" >> $GITHUB_ENV
+          echo "APP_VERSION=$APP_VERSION" >> $GITHUB_ENV
 
           cd "$DIST_DIR"
           zip -r "../$ZIP_NAME" ./* -x "*.pyc" "__pycache__/*"
@@ -266,6 +283,7 @@ jobs:
           cat > build_info.txt <<EOF
           ${PROJECT_NAME} macOS Build Info
           ========================================================
+          应用版本: ${{ env.APP_VERSION }}
           构建时间: $(date '+%Y-%m-%d %H:%M:%S %Z')
           Runner OS: $(sw_vers -productName) $(sw_vers -productVersion)
           Runner 架构: $(uname -m)
@@ -291,7 +309,8 @@ jobs:
         if: inputs.upload_artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.ZIP_NAME }}
+          # Artifact 名称格式: macOS-{arch}-{version}  便于在 Actions Summary 中一眼区分
+          name: macOS-${{ env.TARGET_ARCH == 'arm64' && 'arm64_M2' || (env.TARGET_ARCH == 'universal2' && 'universal2' || 'x86_64') }}-${{ env.APP_VERSION }}
           path: |
             ${{ env.ZIP_NAME }}
             build_info.txt
@@ -304,15 +323,19 @@ jobs:
           echo "  macOS (M2/Apple Silicon) 构建完成 ✓"
           echo "========================================"
           echo "项目名称: $PROJECT_NAME"
+          echo "应用版本: $APP_VERSION"
           echo "Runner: ${{ github.event.inputs.runner }} ($(uname -m))"
           echo "目标架构: ${{ env.TARGET_ARCH }}"
           echo "Python: ${{ github.event.inputs.python_version }}"
           echo "产物目录: $DIST_DIR/"
           if [ -n "${{ env.ZIP_NAME }}" ]; then
             echo "ZIP 包: ${{ env.ZIP_NAME }}"
+            echo "Artifact: macOS-$( [ "${{ env.TARGET_ARCH }}" = "arm64" ] && echo arm64_M2 || ( [ "${{ env.TARGET_ARCH }}" = "universal2" ] && echo universal2 || echo x86_64) )-$APP_VERSION"
           fi
           echo "========================================"
           echo ""
           echo "💡 下载说明:"
           echo "   在 GitHub Actions 页面 → 当前 Run → Summary"
-          echo "   → Artifacts 区域下载 ZIP 包，解压后双击 .app 即可使用"
+          echo "   → Artifacts 区域选择对应平台的包下载:"
+          echo "     macOS 版  → macOS-arm64_M2-$APP_VERSION（M1/M2/M3 芯片）"
+          echo "              或 macOS-universal2-$APP_VERSION（双架构通用）"

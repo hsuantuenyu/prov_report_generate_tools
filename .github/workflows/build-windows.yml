@@ -1,0 +1,296 @@
+name: Build Windows App
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: 'Windows Runner（推荐 windows-latest）'
+        required: true
+        default: 'windows-latest'
+        type: choice
+        options:
+          - 'windows-latest'
+          - 'windows-2022'
+          - 'windows-2019'
+      python_version:
+        description: 'Python 版本（推荐 3.11+）'
+        required: true
+        default: '3.12'
+        type: choice
+        options:
+          - '3.10'
+          - '3.11'
+          - '3.12'
+          - '3.13'
+      architecture:
+        description: '目标架构（Windows 一般用 x64）'
+        required: true
+        default: 'x64'
+        type: choice
+        options:
+          - 'x64'
+          - 'x86'
+      upload_artifact:
+        description: '上传构建产物到 Artifact'
+        required: true
+        default: true
+        type: boolean
+      artifact_retention_days:
+        description: 'Artifact 保留天数'
+        required: true
+        default: '30'
+        type: choice
+        options:
+          - '1'
+          - '7'
+          - '14'
+          - '30'
+          - '60'
+          - '90'
+
+env:
+  PROJECT_NAME: 疾控中心下发报告生成工具
+  DIST_DIR: dist
+
+jobs:
+  build-windows:
+    name: Build Windows App (${{ github.event.inputs.runner }} / ${{ github.event.inputs.architecture }})
+    runs-on: ${{ github.event.inputs.runner }}
+
+    steps:
+      - name: Checkout 源代码
+        uses: actions/checkout@v4
+
+      - name: 显示 Runner 硬件信息
+        run: |
+          echo "=== 硬件信息 ==="
+          echo "OS: $env:OS"
+          echo "CPU: $($env:PROCESSOR_IDENTIFIER)"
+          echo "架构: $(if ([Environment]::Is64BitOperatingSystem) { 'x64' } else { 'x86' })"
+          echo "CPU 核数: $($env:NUMBER_OF_PROCESSORS)"
+          echo ""
+          echo "=== Windows 版本 ==="
+          [System.Environment]::OSVersion.VersionString
+          echo ""
+          echo "=== 磁盘空间 ==="
+          Get-PSDrive C | Select-Object Used,Free
+
+      - name: 设置 Python ${{ github.event.inputs.python_version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ github.event.inputs.python_version }}
+          architecture: ${{ github.event.inputs.architecture }}
+
+      - name: 验证 Python 与架构匹配
+        run: |
+          Write-Host "=== Python 信息 ==="
+          python --version
+          Write-Host "Python 路径: $(Get-Command python | Select-Object -ExpandProperty Source)"
+          Write-Host "Python 架构: $([System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture)"
+          Write-Host ""
+          Write-Host "=== Tcl/Tk (tkinter) 验证 ==="
+          python -c "
+          import tkinter
+          print(f'tkinter 版本: {tkinter.TkVersion}')
+          print(f'Tcl 版本: {tkinter.Tcl().eval(\"info patchlevel\")}')
+          "
+
+      - name: 安装 Python 依赖
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          Write-Host "=== 安装构建依赖 (duckdb/pandas/openpyxl/tkcalendar/pyinstaller) ==="
+          pip install duckdb pandas openpyxl tkcalendar pyinstaller
+          Write-Host ""
+          Write-Host "=== 已安装依赖版本 ==="
+          pip list | Select-String -Pattern "duckdb|pandas|openpyxl|tkcalendar|pyinstaller"
+          Write-Host ""
+          Write-Host "=== pyinstaller 版本 ==="
+          pyinstaller --version
+
+      - name: 运行 Windows 构建兼容性验证
+        run: |
+          Write-Host "=== 运行构建兼容性检查 ==="
+          # 基础语法和依赖检查
+          python -c "
+          import py_compile
+          import os
+          # 检查 report_generator.py 语法
+          py_compile.compile('report_generator.py', doraise=True)
+          print('report_generator.py 语法检查: OK')
+          # 检查 spec 语法
+          py_compile.compile('report_generator.spec', doraise=True)
+          print('report_generator.spec 语法检查: OK')
+          # 检查关键依赖
+          import duckdb, pandas, openpyxl, tkcalendar, PyInstaller
+          print(f'duckdb: {duckdb.__version__}')
+          print(f'pandas: {pandas.__version__}')
+          print(f'openpyxl: {openpyxl.__version__}')
+          print(f'tkcalendar: OK')
+          print(f'PyInstaller: {PyInstaller.__version__}')
+          # 检查资源文件
+          for f in ['prov_report.db', 'prov_generate_data.sql', '疾控下发汇总报告模板.xlsx', '版本日志.txt', 'file_version_info.txt']:
+              exists = os.path.isfile(f)
+              print(f'{f}: {\"OK\" if exists else \"MISSING\"}')
+          "
+
+      - name: 执行 PyInstaller 构建
+        run: |
+          Write-Host "=== 开始 PyInstaller 构建（Windows ${{ github.event.inputs.architecture }}） ==="
+          python build_exe.py
+          Write-Host ""
+          Write-Host "=== dist 目录内容 ==="
+          Get-ChildItem "$env:DIST_DIR" | Format-Table Name,Length,LastWriteTime -AutoSize
+          Write-Host ""
+          $EXE_PATH = Join-Path $env:DIST_DIR "$env:PROJECT_NAME.exe"
+          if (Test-Path $EXE_PATH) {
+              $size = (Get-Item $EXE_PATH).Length / 1MB
+              Write-Host ".exe 文件信息: $EXE_PATH"
+              Write-Host ("文件大小: {0:N1} MB" -f $size)
+              Write-Host ""
+              # 验证文件版本信息（从 file_version_info.txt 注入）
+              try {
+                  $verInfo = (Get-Item $EXE_PATH).VersionInfo
+                  Write-Host "=== EXE 文件版本信息 ==="
+                  Write-Host "ProductVersion: $($verInfo.ProductVersion)"
+                  Write-Host "FileVersion: $($verInfo.FileVersion)"
+                  Write-Host "FileDescription: $($verInfo.FileDescription)"
+              } catch {
+                  Write-Host "读取版本信息失败: $_"
+              }
+          } else {
+              Write-Host "❌ 错误：未找到 .exe 文件"
+              exit 1
+          }
+
+      - name: 验证可执行文件架构
+        if: success()
+        run: |
+          $EXE_PATH = Join-Path $env:DIST_DIR "$env:PROJECT_NAME.exe"
+          if (Test-Path $EXE_PATH) {
+              Write-Host "检查可执行文件: $EXE_PATH"
+              # 使用 PE 头判断架构
+              $bytes = [System.IO.File]::ReadAllBytes($EXE_PATH)
+              $PEOffset = [BitConverter]::ToInt32($bytes, 0x3C)
+              $Machine = [BitConverter]::ToUInt16($bytes, $PEOffset + 4)
+              $arch = switch ($Machine) {
+                  0x8664 { 'x64 (AMD64)' }
+                  0x014c { 'x86 (i386)' }
+                  0xAA64 { 'ARM64' }
+                  default { "Unknown (0x{0:X4})" -f $Machine }
+              }
+              Write-Host ""
+              Write-Host "=== PE 架构检查 ==="
+              Write-Host "架构: $arch"
+              $expectedArch = if ('${{ github.event.inputs.architecture }}' -eq 'x64') { 'x64' } else { 'x86' }
+              if ($arch -match $expectedArch) {
+                  Write-Host "✅ Windows $expectedArch 架构验证通过"
+              } else {
+                  Write-Host "❌ 错误：期望 $expectedArch 架构，但实际检测到：$arch"
+                  exit 1
+              }
+          } else {
+              Write-Host "❌ 未找到可执行文件"
+              exit 1
+          }
+
+      - name: 打包构建产物 ZIP
+        if: inputs.upload_artifact
+        run: |
+          $TIMESTAMP = Get-Date -Format "yyyyMMdd_HHmmss"
+          # 读取版本号（从 report_generator.py 中提取 VERSION）
+          $APP_VERSION = python -c "
+          import re
+          with open('report_generator.py', 'r', encoding='utf-8') as f:
+              content = f.read()
+          m = re.search(r'VERSION\s*=\s*\"([^\"]+)\"', content)
+          print(m.group(1) if m else 'Unknown')
+          "
+          Write-Host "应用版本: $APP_VERSION"
+
+          $ARCH_LABEL = '${{ github.event.inputs.architecture }}'
+          if ($ARCH_LABEL -eq 'x64') { $ARCH_DISPLAY = 'x64' } else { $ARCH_DISPLAY = 'x86' }
+
+          # 产物命名规范: {PROJECT_NAME}_{VERSION}_Windows_{ARCH}_{TIMESTAMP}.zip
+          $ZIP_NAME = "${{ env.PROJECT_NAME }}_${APP_VERSION}_Windows_${ARCH_DISPLAY}_${TIMESTAMP}.zip"
+          Write-Host "ZIP 文件名: $ZIP_NAME"
+
+          # 设置后续步骤使用的环境变量
+          Add-Content -Path $env:GITHUB_ENV -Value "ARTIFACT_NAME=Windows-$ARCH_DISPLAY-$APP_VERSION"
+          Add-Content -Path $env:GITHUB_ENV -Value "TIMESTAMP=$TIMESTAMP"
+          Add-Content -Path $env:GITHUB_ENV -Value "ZIP_NAME=$ZIP_NAME"
+          Add-Content -Path $env:GITHUB_ENV -Value "APP_VERSION=$APP_VERSION"
+
+          # 打包（使用 Compress-Archive）
+          Set-Location $env:DIST_DIR
+          Compress-Archive -Path ".\*" -DestinationPath "..\$ZIP_NAME" -Force
+          Set-Location ".."
+          Write-Host ""
+          Write-Host "=== ZIP 文件信息 ==="
+          $zipItem = Get-Item $ZIP_NAME
+          Write-Host ("大小: {0:N1} MB" -f ($zipItem.Length / 1MB))
+          Write-Host "ZIP 条目统计:"
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = [System.IO.Compression.ZipFile]::OpenRead($ZIP_NAME)
+          Write-Host "  总条目数: $($zip.Entries.Count)"
+          $zip.Dispose()
+
+      - name: 生成 Build README（产物说明）
+        if: inputs.upload_artifact
+        run: |
+          $buildInfo = @"
+          ${{ env.PROJECT_NAME }} Windows Build Info
+          ========================================================
+          应用版本: $($env:APP_VERSION)
+          构建时间: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss K')
+          Runner OS: $([System.Environment]::OSVersion.VersionString)
+          Runner 架构: $(if ([Environment]::Is64BitOperatingSystem) { 'x64' } else { 'x86' })
+          目标架构: ${{ github.event.inputs.architecture }}
+          Python: $(python --version 2>&1 | ForEach-Object { $_ -replace 'Python ', '' })
+          PyInstaller: $(pyinstaller --version)
+          duckdb: $(python -c "import duckdb; print(duckdb.__version__)")
+          pandas: $(python -c "import pandas; print(pandas.__version__)")
+          ========================================================
+          首次打开方法:
+            双击 .exe 直接运行（无需安装）
+          ========================================================
+          依赖说明:
+            所有 Python 依赖（duckdb/pandas/openpyxl/tkcalendar/tcl/tk）已打包进 .exe
+            无需额外安装 Python 环境
+          ========================================================
+          "@
+          Set-Content -Path "build_info.txt" -Value $buildInfo -Encoding UTF8
+          Get-Content "build_info.txt"
+
+      - name: 上传构建产物到 Artifact
+        if: inputs.upload_artifact
+        uses: actions/upload-artifact@v4
+        with:
+          # Artifact 名称格式: Windows-{arch}-{version}  便于在 Actions Summary 中一眼区分
+          name: Windows-${{ github.event.inputs.architecture }}-${{ env.APP_VERSION }}
+          path: |
+            ${{ env.ZIP_NAME }}
+            build_info.txt
+          retention-days: ${{ github.event.inputs.artifact_retention_days }}
+          compression-level: 6
+
+      - name: 构建完成 - 汇总
+        run: |
+          $ARCH_DISPLAY = '${{ github.event.inputs.architecture }}'
+          Write-Host "========================================"
+          Write-Host "  Windows ($ARCH_DISPLAY) 构建完成 ✓"
+          Write-Host "========================================"
+          Write-Host "项目名称: ${{ env.PROJECT_NAME }}"
+          Write-Host "应用版本: $($env:APP_VERSION)"
+          Write-Host "Runner: ${{ github.event.inputs.runner }} ($ARCH_DISPLAY)"
+          Write-Host "Python: ${{ github.event.inputs.python_version }}"
+          Write-Host "产物目录: $($env:DIST_DIR)/"
+          if ($env:ZIP_NAME) {
+              Write-Host "ZIP 包: $($env:ZIP_NAME)"
+              Write-Host "Artifact: Windows-$ARCH_DISPLAY-$($env:APP_VERSION)"
+          }
+          Write-Host "========================================"
+          Write-Host ""
+          Write-Host "💡 下载说明:"
+          Write-Host "   在 GitHub Actions 页面 → 当前 Run → Summary"
+          Write-Host "   → Artifacts 区域选择对应平台的包下载:"
+          Write-Host "     Windows 版 → Windows-$ARCH_DISPLAY-$($env:APP_VERSION)"

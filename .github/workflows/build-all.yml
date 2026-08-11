@@ -69,16 +69,7 @@ jobs:
           pip install duckdb pandas openpyxl tkcalendar pyinstaller
 
       - name: 构建兼容性检查
-        run: |
-          python -c "
-          import py_compile, os
-          py_compile.compile('report_generator.py', doraise=True)
-          py_compile.compile('report_generator.spec', doraise=True)
-          import duckdb, pandas, openpyxl, tkcalendar, PyInstaller
-          print(f'duckdb={duckdb.__version__}, pandas={pandas.__version__}, PyInstaller={PyInstaller.__version__}')
-          for f in ['prov_report.db','prov_generate_data.sql','疾控下发汇总报告模板.xlsx','版本日志.txt','file_version_info.txt']:
-              print(f'{f}: {\"OK\" if os.path.isfile(f) else \"MISSING\"}')
-          "
+        run: python verify_build_env.py
 
       - name: PyInstaller 构建
         run: python build_exe.py

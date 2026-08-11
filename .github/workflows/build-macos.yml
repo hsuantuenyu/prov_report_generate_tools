@@ -130,13 +130,10 @@ jobs:
           echo "Python 报告架构: $PYTHON_ARCH"
           echo ""
           echo "=== Tcl/Tk (tkinter) 验证 ==="
-          python -c "
-          import tkinter
-          import sys
-          print(f'tkinter 版本: {tkinter.TkVersion}')
-          print(f'Tcl 版本: {tkinter.Tcl().eval(\"info patchlevel\")}')
-          print(f'Python 架构: {sys.platform} {platform.machine() if \"platform\" in dir() else \"\"}')
-          "
+          python -c 'import tkinter, sys, platform
+print("tkinter 版本:", tkinter.TkVersion)
+print("Tcl 版本:", tkinter.Tcl().eval("info patchlevel"))
+print("Python 架构:", sys.platform, platform.machine())'
 
       - name: 安装 Python 依赖
         run: |

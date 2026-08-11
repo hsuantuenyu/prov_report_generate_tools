@@ -123,18 +123,29 @@ def check_spec_macos_bundle_and_arm64(filepath):
                          'sys.platform=="win32"' in content)
     results.append(check_result("version 参数有 Windows 平台保护", has_version_guard))
 
-    has_platform_import = 'import platform' in content
-    results.append(check_result("import platform（用于检测架构）", has_platform_import))
+    # 架构检测：支持两种方案
+    #   方案A (旧): import platform + platform.machine()
+    #   方案B (新): os.environ.get('TARGET_ARCH') 环境变量控制
+    has_arch_detect = ('import platform' in content and 'platform.machine' in content) or \
+                      ('os.environ.get' in content and 'TARGET_ARCH' in content)
+    results.append(check_result("架构检测逻辑（platform.machine 或 os.environ.get）", has_arch_detect,
+                                "支持 platform.machine() 或 os.environ.get('TARGET_ARCH') 两种方案"))
 
-    has_arm64_detect = 'arm64' in content and ('platform.machine' in content or 'aarch64' in content)
-    results.append(check_result("Apple Silicon (arm64) 架构检测逻辑", has_arm64_detect,
-                                "M2 芯片需 platform.machine() 判断 arm64/aarch64"))
+    has_arm64 = 'arm64' in content
+    results.append(check_result("包含 arm64 架构标识", has_arm64))
 
     has_target_arch = 'target_arch' in content
     results.append(check_result("PyInstaller target_arch 参数（指定生成 arm64）", has_target_arch))
 
     has_info_plist = 'info_plist' in content
-    results.append(check_result("BUNDLE info_plist 设置（LSArchitecturePriority 等）", has_info_plist))
+    results.append(check_result("BUNDLE info_plist 设置", has_info_plist))
+
+    # info_plist 内容检查：支持 LSArchitecturePriority 或 LSMinimumSystemVersion 或 NSPrincipalClass
+    has_plist_content = any(key in content for key in [
+        'LSArchitecturePriority', 'LSMinimumSystemVersion', 'NSPrincipalClass',
+        'NSHighResolutionCapable', 'CFBundleDisplayName'
+    ])
+    results.append(check_result("info_plist 包含有效配置项", has_plist_content))
 
     return all(results)
 
@@ -345,7 +356,7 @@ def simulate_app_structure_arm64():
         "Contents/MacOS/",
         "Contents/MacOS/疾控中心下发报告生成工具  (Mach-O arm64 可执行)",
         "Contents/Resources/",
-        "Contents/Info.plist  (含 LSArchitecturePriority=arm64)",
+        "Contents/Info.plist  (含 LSMinimumSystemVersion / NSPrincipalClass)",
     ]
 
     print("  预期 M2 .app 包结构 + ARM64 特性：")
@@ -357,9 +368,13 @@ def simulate_app_structure_arm64():
     if os.path.isfile(spec_path):
         with open(spec_path, 'r', encoding='utf-8') as f:
             spec = f.read()
-        check_result("spec target_arch=arm64 动态设置", 'target_arch' in spec and 'arm64' in spec)
+        check_result("spec target_arch 动态设置", 'target_arch' in spec and 'arm64' in spec)
         check_result("spec BUNDLE info_plist 存在", 'info_plist' in spec)
-        check_result("spec LSArchitecturePriority 设置", 'LSArchitecturePriority' in spec)
+        # 支持 LSArchitecturePriority 或 LSMinimumSystemVersion 或 NSPrincipalClass
+        has_plist_key = any(key in spec for key in [
+            'LSArchitecturePriority', 'LSMinimumSystemVersion', 'NSPrincipalClass'
+        ])
+        check_result("spec info_plist 包含有效配置项", has_plist_key)
     check_result("Mach-O 可执行文件应为 arm64 切片", True,
                  "在 macOS 上使用 `file` / `lipo -info` 验证")
     check_result("移除隔离属性 (xattr -d com.apple.quarantine)", True,

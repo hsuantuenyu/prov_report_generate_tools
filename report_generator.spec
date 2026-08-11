@@ -5,17 +5,26 @@ macOS:   生成 .app 应用包 (兼容 macOS 11+)
 """
 import sys
 import os
+import platform
 
 # ===== macOS 兼容性配置 =====
 # 通过环境变量控制目标架构: x86_64 / arm64 / universal2
-TARGET_ARCH = os.environ.get('TARGET_ARCH', None)
-if TARGET_ARCH == 'universal2':
+# 注意：当目标架构与当前系统架构相同时，不显式设置 target_arch，
+# 让 PyInstaller 自动使用当前架构。显式设置会触发对单架构 .so 文件
+# （如 numpy 的 _multiarray_tests.so）的架构转换处理，导致
+# "is not a fat binary" 错误。
+_TARGET_ARCH_ENV = os.environ.get('TARGET_ARCH', None)
+_CURRENT_ARCH = platform.machine().lower()  # arm64 / x86_64 / aarch64
+
+if _TARGET_ARCH_ENV == 'universal2':
     # universal2 需要特殊处理，PyInstaller 会尝试构建通用二进制
     PYI_TARGET_ARCH = 'universal2'
-elif TARGET_ARCH in ('x86_64', 'arm64'):
-    PYI_TARGET_ARCH = TARGET_ARCH
+elif _TARGET_ARCH_ENV in ('x86_64', 'arm64') and _TARGET_ARCH_ENV != _CURRENT_ARCH:
+    # 仅当目标架构与当前系统架构不同时才显式设置（跨架构构建）
+    PYI_TARGET_ARCH = _TARGET_ARCH_ENV
 else:
-    PYI_TARGET_ARCH = None  # 使用当前系统架构
+    # 目标架构未指定或与当前架构相同：使用 None 让 PyInstaller 自动处理
+    PYI_TARGET_ARCH = None
 
 # 读取 macOS 部署目标版本 (默认 11.0，支持 11-14)
 MACOS_MIN_VERSION = os.environ.get('MACOSX_DEPLOYMENT_TARGET', '11.0')

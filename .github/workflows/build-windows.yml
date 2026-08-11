@@ -173,13 +173,7 @@ jobs:
         run: |
           $TIMESTAMP = Get-Date -Format "yyyyMMdd_HHmmss"
           # 读取版本号（从 report_generator.py 中提取 VERSION）
-          $APP_VERSION = python -c "
-          import re
-          with open('report_generator.py', 'r', encoding='utf-8') as f:
-              content = f.read()
-          m = re.search(r'VERSION\s*=\s*\"([^\"]+)\"', content)
-          print(m.group(1) if m else 'Unknown')
-          "
+          $APP_VERSION = python -c "import re; c=open('report_generator.py',encoding='utf-8').read(); m=re.search(r'VERSION\s*=\s*\x22([^\x22]+)\x22', c); print(m.group(1) if m else 'Unknown')"
           Write-Host "应用版本: $APP_VERSION"
 
           $ARCH_LABEL = '${{ github.event.inputs.architecture }}'

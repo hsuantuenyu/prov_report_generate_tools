@@ -94,7 +94,7 @@ jobs:
         if: inputs.upload_artifact
         run: |
           $TS = Get-Date -Format "yyyyMMdd_HHmmss"
-          $VER = python -c "import re;c=open('report_generator.py',encoding='utf-8').read();m=re.search(r'VERSION\s*=\s*\"([^\"]+)\"',c);print(m.group(1)if m else'Unknown')"
+          $VER = python -c "import re; c=open('report_generator.py',encoding='utf-8').read(); m=re.search(r'VERSION\s*=\s*\x22([^\x22]+)\x22', c); print(m.group(1) if m else 'Unknown')"
           $ZIP = "${{ env.PROJECT_NAME }}_${VER}_Windows_x64_${TS}.zip"
           Write-Host "ZIP: $ZIP"
           Add-Content $env:GITHUB_ENV "APP_VERSION=$VER"
@@ -169,7 +169,7 @@ jobs:
         if: inputs.upload_artifact
         run: |
           TS=$(date +"%Y%m%d_%H%M%S")
-          VER=$(python -c "import re;c=open('report_generator.py',encoding='utf-8').read();m=re.search(r'VERSION\s*=\s*\"([^\"]+)\"',c);print(m.group(1)if m else'Unknown')")
+          VER=$(python -c "import re; c=open('report_generator.py',encoding='utf-8').read(); m=re.search(r'VERSION\s*=\s*\x22([^\x22]+)\x22', c); print(m.group(1) if m else 'Unknown')")
           ZIP="${{ env.PROJECT_NAME }}_${VER}_macOS_arm64_M2_${TS}.zip"
           echo "ZIP: $ZIP"
           echo "APP_VERSION=$VER" >> $GITHUB_ENV
@@ -239,7 +239,7 @@ jobs:
         if: inputs.upload_artifact
         run: |
           TS=$(date +"%Y%m%d_%H%M%S")
-          VER=$(python -c "import re;c=open('report_generator.py',encoding='utf-8').read();m=re.search(r'VERSION\s*=\s*\"([^\"]+)\"',c);print(m.group(1)if m else'Unknown')")
+          VER=$(python -c "import re; c=open('report_generator.py',encoding='utf-8').read(); m=re.search(r'VERSION\s*=\s*\x22([^\x22]+)\x22', c); print(m.group(1) if m else 'Unknown')")
           ZIP="${{ env.PROJECT_NAME }}_${VER}_macOS_universal2_${TS}.zip"
           echo "APP_VERSION=$VER" >> $GITHUB_ENV
           echo "ZIP_NAME=$ZIP" >> $GITHUB_ENV

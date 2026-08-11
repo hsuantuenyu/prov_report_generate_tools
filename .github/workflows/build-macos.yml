@@ -130,10 +130,7 @@ jobs:
           echo "Python 报告架构: $PYTHON_ARCH"
           echo ""
           echo "=== Tcl/Tk (tkinter) 验证 ==="
-          python -c 'import tkinter, sys, platform
-print("tkinter 版本:", tkinter.TkVersion)
-print("Tcl 版本:", tkinter.Tcl().eval("info patchlevel"))
-print("Python 架构:", sys.platform, platform.machine())'
+          python verify_build_env.py
 
       - name: 安装 Python 依赖
         run: |
@@ -239,13 +236,7 @@ print("Python 架构:", sys.platform, platform.machine())'
         run: |
           TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
           # 读取版本号（从 report_generator.py 中提取 VERSION）
-          APP_VERSION=$(python -c "
-          import re
-          with open('report_generator.py', 'r', encoding='utf-8') as f:
-              content = f.read()
-          m = re.search(r'VERSION\s*=\s*\"([^\"]+)\"', content)
-          print(m.group(1) if m else 'Unknown')
-          ")
+          APP_VERSION=$(python -c "import re; c=open('report_generator.py',encoding='utf-8').read(); m=re.search(r'VERSION\s*=\s*[\x22]([^\x22]+)[\x22]', c); print(m.group(1) if m else 'Unknown')")
           echo "应用版本: $APP_VERSION"
 
           ARCH_LABEL="${{ env.TARGET_ARCH }}"

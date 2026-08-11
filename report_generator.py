@@ -4,6 +4,7 @@ import duckdb
 import pandas as pd
 import os
 import sys
+import shutil
 import threading
 import warnings
 from datetime import datetime
@@ -14,68 +15,210 @@ from tkcalendar import Calendar
 warnings.filterwarnings('ignore', message='pandas only supports SQLAlchemy')
 
 
-VERSION = "V1.8"
-BUILD_DATE = "2026-07-28"
-
-# 跨平台字体：Windows 用微软雅黑，macOS 用苹方-简
-UI_FONT = '微软雅黑' if sys.platform == 'win32' else 'PingFang SC'
+VERSION = "V1.9"
+BUILD_DATE = "2026-08-07"
 
 
-def get_resource_dir():
-    """获取资源文件所在目录（兼容 PyInstaller 打包和开发模式）
-    Windows exe: exe 所在目录
-    macOS .app: .app 的同级目录（即 dist 目录，资源文件在此）
-    开发模式: 脚本所在目录
+# ===== 跨平台路径解析（参照 qzrj 项目方案）=====
+# PyInstaller 打包后，sys._MEIPASS 指向临时解压目录（只读）
+# 开发模式下，资源文件在脚本所在目录
+_FROZEN = getattr(sys, 'frozen', False)
+_RESOURCE_DIR = sys._MEIPASS if _FROZEN else os.path.dirname(os.path.abspath(__file__))
+
+# 数据库完整性检查：必须存在的关键表（缺少任何一个视为数据库损坏）
+_REQUIRED_TABLES = ['org_list']
+
+
+def _is_db_valid(db_path):
+    """检查数据库是否包含关键表，防止使用空壳/损坏的数据库文件。"""
+    try:
+        conn = duckdb.connect(db_path)
+        existing_tables = [row[0] for row in conn.execute(
+            "SELECT table_name FROM information_schema.tables WHERE table_schema='main'"
+        ).fetchall()]
+        conn.close()
+        return all(t in existing_tables for t in _REQUIRED_TABLES)
+    except Exception:
+        return False
+
+
+def resolve_resource(filename):
+    """解析只读资源文件路径（SQL 文件、模板等不需要写入的文件）"""
+    return os.path.join(_RESOURCE_DIR, filename)
+
+
+def get_writable_db_path(db_name):
+    """获取可写的数据库路径。
+    macOS .app 包内的资源是只读的，需要将数据库复制到可写位置。
+    采用三级回退策略：
+      1. 优先检查 .app/exe 同级目录（build_exe.py 复制的文件位置）
+      2. 检查 .app/exe 同级的 data/ 子目录
+      3. 回退到用户数据目录（macOS: ~/Library/Application Support/）
+    每一步都会测试写权限，确保目标目录可写。
+    发现数据库文件时会验证表完整性（排除空壳/损坏文件）。
     """
-    if getattr(sys, 'frozen', False):
-        # PyInstaller 打包模式
-        exe_dir = os.path.dirname(sys.executable)
+    if _FROZEN:
         if sys.platform == 'darwin':
-            # macOS .app: sys.executable = xxx.app/Contents/MacOS/xxx
-            # 资源文件在 .app 同级目录，需向上回溯 3 级
-            # MacOS -> Contents -> xxx.app -> dist(资源目录)
-            app_dir = os.path.dirname(os.path.dirname(exe_dir))
-            return os.path.dirname(app_dir)
+            exe_dir = os.path.dirname(sys.executable)
+            app_contents_dir = os.path.dirname(exe_dir)       # Contents/
+            app_bundle_dir = os.path.dirname(app_contents_dir)  # .app/
+            sibling_dir = os.path.dirname(app_bundle_dir)
         else:
-            # Windows: exe 所在目录即资源目录
-            return exe_dir
+            sibling_dir = os.path.dirname(sys.executable)
+
+        # 1. 优先检查 .app/exe 同级目录是否已有有效数据库
+        candidate = os.path.join(sibling_dir, db_name)
+        if os.path.exists(candidate) and _is_db_valid(candidate):
+            return candidate
+
+        # 如果文件存在但无效（空壳/损坏），删除以便后续步骤重新复制
+        if os.path.exists(candidate):
+            try:
+                os.remove(candidate)
+            except Exception:
+                pass
+
+        # 2. 检查 .app/exe 同级的 data/ 子目录
+        data_dir = os.path.join(sibling_dir, 'data')
+        if os.path.isdir(data_dir):
+            candidate = os.path.join(data_dir, db_name)
+            if os.path.exists(candidate) and _is_db_valid(candidate):
+                return candidate
+            if os.path.exists(candidate):
+                try:
+                    os.remove(candidate)
+                except Exception:
+                    pass
+
+        # 3. 以上都没有，创建可写副本
+        try:
+            os.makedirs(data_dir, exist_ok=True)
+            test_file = os.path.join(data_dir, '.write_test')
+            with open(test_file, 'w') as f:
+                f.write('test')
+            os.remove(test_file)
+        except (PermissionError, OSError):
+            # 回退到用户数据目录
+            if sys.platform == 'darwin':
+                data_dir = os.path.join(
+                    os.path.expanduser('~/Library/Application Support/疾控中心下发报告生成工具'),
+                    'data'
+                )
+            else:
+                data_dir = os.path.join(
+                    os.path.expanduser('~'), '.疾控中心下发报告生成工具', 'data'
+                )
+            os.makedirs(data_dir, exist_ok=True)
+
+        writable_path = os.path.join(data_dir, db_name)
+
+        # 从 PyInstaller 包内复制数据库到可写位置
+        resource_db = os.path.join(_RESOURCE_DIR, db_name)
+        if not os.path.exists(writable_path) and os.path.exists(resource_db):
+            shutil.copy2(resource_db, writable_path)
+
+        return writable_path
     else:
-        # 开发模式：脚本所在目录
-        return os.path.dirname(os.path.abspath(__file__))
+        # 开发模式：直接在脚本所在目录操作
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        dev_path = os.path.join(script_dir, db_name)
+        # 如果开发目录的数据库无效，尝试从资源目录复制
+        if os.path.exists(dev_path) and not _is_db_valid(dev_path):
+            resource_db = os.path.join(_RESOURCE_DIR, db_name)
+            if os.path.exists(resource_db):
+                try:
+                    shutil.copy2(resource_db, dev_path)
+                except Exception:
+                    pass
+        try:
+            test_file = os.path.join(script_dir, '.write_test')
+            with open(test_file, 'w') as f:
+                f.write('test')
+            os.remove(test_file)
+            return dev_path
+        except (PermissionError, OSError):
+            data_dir = os.path.join(os.path.expanduser('~'), '.疾控中心下发报告生成工具')
+            os.makedirs(data_dir, exist_ok=True)
+            writable_path = os.path.join(data_dir, db_name)
+            if not os.path.exists(writable_path) and os.path.exists(dev_path):
+                shutil.copy2(dev_path, writable_path)
+            return writable_path
 
-
-def resource_path(filename):
-    """拼接资源文件的绝对路径"""
-    return os.path.join(get_resource_dir(), filename)
 
 class ReportGeneratorTool:
     def __init__(self, root):
         self.root = root
         self.root.title(f"疾控中心下发报告生成辅助工具 {VERSION} ({BUILD_DATE})")
-        
-        # 设置窗口大小并居中（macOS 字体/控件更大，需要更大窗口）
-        if sys.platform == 'darwin':
-            window_width = 880
-            window_height = 820
-        else:
-            window_width = 700
-            window_height = 700
+
+        # 确定基准目录
+        self.app_base_dir = _RESOURCE_DIR
+
+        # ===== 窗口大小 =====
         screen_width = root.winfo_screenwidth()
         screen_height = root.winfo_screenheight()
+
+        if sys.platform == 'darwin':
+            # macOS：固定 700x660
+            window_width = 700
+            window_height = 660
+        else:
+            # Windows：固定 700x700
+            window_width = 700
+            window_height = 700
+
+        # 启动时居中
         x = (screen_width - window_width) // 2
         y = (screen_height - window_height) // 2
         self.root.geometry(f"{window_width}x{window_height}+{x}+{y}")
-        
-        # 允许调整窗口大小，设置最小尺寸防止控件被截断
-        self.root.minsize(window_width, window_height)
-        self.root.resizable(True, True)
 
-        # 全局滚动条样式：加宽所有滚动条
+        # 允许调整大小（macOS 上必须为 True 才会显示绿色最大化按钮）
+        self.root.resizable(False, False)
+
+        # ===== ttk 主题与样式 =====
+        # 全局滚动条样式
         style = ttk.Style()
-        style.configure("Vertical.TScrollbar", width=32, arrowsize=24)
-        style.configure("Horizontal.TScrollbar", width=32, arrowsize=24)
-        
-        self.db_path = resource_path("prov_report.db")
+
+        if sys.platform == 'darwin':
+            # macOS 必须使用 aqua 主题才能获得原生外观（圆角按钮、原生标签页、白色背景）
+            # 注意：PyInstaller 打包后 Aqua 主题必须由 tk 自带的 libtk 渲染，
+            # 显式设置 theme_use('aqua') 比依赖默认值更可靠。
+            try:
+                available_themes = style.theme_names()
+                if 'aqua' in available_themes:
+                    style.theme_use('aqua')
+                else:
+                    # 打包时若 Tk 库未携带 aqua，退而求其次用 default/classic，
+                    # 绝对不要使用 clam（灰色很丑）。
+                    for fallback in ('default', 'classic'):
+                        if fallback in available_themes:
+                            style.theme_use(fallback)
+                            break
+            except Exception:
+                pass
+
+            # Aqua 主题大部分样式不可覆盖（是系统原生渲染），
+            # 这里仅配置不会破坏原生外观的值。滚动条按 aqua 原生大小（不要配置 width，会破坏原生比例）
+            try:
+                style.configure("TFrame", padding=0)
+                style.configure("TLabel", padding=0)
+                style.configure("TNotebook", tabposition='n')
+                style.configure("TEntry", padding=3)
+                style.configure("TButton", padding=(12, 4))
+            except Exception:
+                pass
+        else:
+            # Windows：滚动条加宽
+            style.configure("Vertical.TScrollbar", width=32, arrowsize=24)
+            style.configure("Horizontal.TScrollbar", width=32, arrowsize=24)
+
+        # 资源文件路径解析
+        # 数据库需要写入权限 → 三级回退策略定位可写路径
+        self.db_path = get_writable_db_path("prov_report.db")
+        # 只读资源 → 从 _RESOURCE_DIR（PyInstaller 包内或脚本目录）读取
+        self.sql_file_path = resolve_resource("prov_generate_data.sql")
+        self.version_log_path = resolve_resource("版本日志.txt")
+        self.default_template_path = resolve_resource("疾控下发汇总报告模板.xlsx")
+
         self.template_path = None
         self.export_path = None
         self.data_dir = None
@@ -118,7 +261,7 @@ class ReportGeneratorTool:
         """显示版本日志弹窗"""
         top = tk.Toplevel(self.root)
         top.title("版本日志")
-        top.geometry("550x450" if sys.platform == 'win32' else "650x500")
+        top.geometry("550x450")
         top.resizable(False, False)
         top.attributes('-topmost', True)
         top.transient(self.root)
@@ -132,7 +275,7 @@ class ReportGeneratorTool:
         top.geometry(f"{width}x{height}+{x}+{y}")
 
         # 标题
-        title_label = ttk.Label(top, text="版本更新日志", font=(UI_FONT, 14, 'bold'))
+        title_label = ttk.Label(top, text="版本更新日志", font=('微软雅黑', 14, 'bold'))
         title_label.pack(pady=(15, 10))
 
         # 带滚动条的文本框
@@ -142,12 +285,12 @@ class ReportGeneratorTool:
         scrollbar = ttk.Scrollbar(text_frame)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
-        text_widget = tk.Text(text_frame, wrap=tk.WORD, yscrollcommand=scrollbar.set, font=(UI_FONT, 10))
+        text_widget = tk.Text(text_frame, wrap=tk.WORD, yscrollcommand=scrollbar.set, font=('微软雅黑', 10))
         text_widget.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.config(command=text_widget.yview)
 
-        # 读取版本日志文件
-        log_file = resource_path('版本日志.txt')
+        # 读取版本日志文件（使用绝对路径）
+        log_file = self.version_log_path
         try:
             if os.path.exists(log_file):
                 with open(log_file, 'r', encoding='utf-8') as f:
@@ -177,14 +320,23 @@ class ReportGeneratorTool:
         menubar.add_cascade(label="帮助", menu=help_menu)
         self.root.config(menu=menubar)
 
-        main_frame = ttk.Frame(self.root, padding="10")
+        # macOS 优化：外层 padding 使用对称边距（均匀的左右上下内边距）
+        if sys.platform == 'darwin':
+            # aqua 主题自带内部 padding，外层只需要很小的边距即可保持美观对称
+            outer_pad = (3, 2, 3, 2)
+        else:
+            outer_pad = 10
+        main_frame = ttk.Frame(self.root, padding=outer_pad)
         main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
-              
+        # 确保根窗口也给 main_frame 均匀分配空间
+        self.root.columnconfigure(0, weight=1)
+        self.root.rowconfigure(0, weight=1)
+
         # 国标/全部选择框
         flag_frame = ttk.Frame(main_frame)
-        flag_frame.grid(row=0, column=0, sticky=tk.W, pady=5)
+        flag_frame.grid(row=0, column=0, sticky=tk.W, pady=(0, 2 if sys.platform == 'darwin' else 5))
 
-        flag_label = ttk.Label(flag_frame, text="质控报告生成类别：", font=(UI_FONT, 10, 'bold'))
+        flag_label = ttk.Label(flag_frame, text="质控报告生成类别：", font=('微软雅黑', 10, 'bold'))
         flag_label.pack(side=tk.LEFT, padx=5)
 
         national_radio = ttk.Radiobutton(flag_frame, text="国标", variable=self.national_flag_var, value="national")
@@ -192,24 +344,34 @@ class ReportGeneratorTool:
 
         all_radio = ttk.Radiobutton(flag_frame, text="全部", variable=self.national_flag_var, value="all")
         all_radio.pack(side=tk.LEFT, padx=5)
-        
+
+        # Notebook 样式：macOS 上使用较小内边距
         self.notebook = ttk.Notebook(main_frame)
         self.notebook.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         main_frame.columnconfigure(0, weight=1)
         main_frame.rowconfigure(1, weight=1)
 
-        tab1 = ttk.Frame(self.notebook, padding="10")
-        tab2 = ttk.Frame(self.notebook, padding="10")
-        tab3 = ttk.Frame(self.notebook, padding="10")
-        tab4 = ttk.Frame(self.notebook, padding="10")
+        # macOS 上 Tab Frame 用统一的对称 padding: (左,上,右,下)
+        if sys.platform == 'darwin':
+            # aqua 主题的 Notebook/Tab 自带较大内部 padding，只需要小值
+            tab_pad = (2, 1, 2, 1)
+        else:
+            tab_pad = 10
 
-        self.notebook.add(tab1, text="1. 数据库测试")
-        self.notebook.add(tab2, text="2. 数据导入")
-        self.notebook.add(tab3, text="3. 数据加工")
-        self.notebook.add(tab4, text="4. 数据导出")
+        tab1 = ttk.Frame(self.notebook, padding=tab_pad)
+        tab2 = ttk.Frame(self.notebook, padding=tab_pad)
+        tab3 = ttk.Frame(self.notebook, padding=tab_pad)
+        tab4 = ttk.Frame(self.notebook, padding=tab_pad)
+        tab5 = ttk.Frame(self.notebook, padding=tab_pad)
 
-        tab5 = ttk.Frame(self.notebook, padding="10")
-        self.notebook.add(tab5, text="5. 机构管理")
+        # 选项卡标签：紧凑 padding
+        tab_label_pad = (8, 3) if sys.platform == 'darwin' else (20, 8)
+
+        self.notebook.add(tab1, text="① 数据库测试", padding=tab_label_pad)
+        self.notebook.add(tab2, text="② 数据导入", padding=tab_label_pad)
+        self.notebook.add(tab3, text="③ 数据加工", padding=tab_label_pad)
+        self.notebook.add(tab4, text="④ 数据导出", padding=tab_label_pad)
+        self.notebook.add(tab5, text="⑤ 机构管理", padding=tab_label_pad)
 
         self.create_db_test_tab(tab1)
         self.create_data_import_tab(tab2)
@@ -219,7 +381,13 @@ class ReportGeneratorTool:
         
     def create_db_test_tab(self, parent):
         """创建数据库测试 Tab"""
-        frame = ttk.LabelFrame(parent, text="DuckDB 数据库连接测试", padding="5")
+        # 左右对称 padding: (左, 上, 右, 下)
+        if sys.platform == 'darwin':
+            # aqua 主题原生 LabelFrame 自带漂亮边框与 padding，只需要小内边距
+            lf_pad = (2, 1, 2, 1)
+        else:
+            lf_pad = 5
+        frame = ttk.LabelFrame(parent, text="DuckDB 数据库连接测试", padding=lf_pad)
         frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         parent.columnconfigure(0, weight=1)
         parent.rowconfigure(0, weight=1)
@@ -275,7 +443,13 @@ class ReportGeneratorTool:
             
     def create_data_import_tab(self, parent):
         """创建数据导入 Tab"""
-        frame = ttk.LabelFrame(parent, text="数据导入", padding="5")
+        # 左右对称 padding: (左, 上, 右, 下)
+        if sys.platform == 'darwin':
+            # aqua 主题原生 LabelFrame 自带漂亮边框与 padding，只需要小内边距
+            lf_pad = (2, 1, 2, 1)
+        else:
+            lf_pad = 5
+        frame = ttk.LabelFrame(parent, text="数据导入", padding=lf_pad)
         frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         parent.columnconfigure(0, weight=1)
         parent.rowconfigure(0, weight=1)
@@ -288,7 +462,7 @@ class ReportGeneratorTool:
         range_frame = ttk.Frame(date_frame)
         range_frame.grid(row=0, column=0, sticky=tk.W, pady=(0, 5))
         
-        range_label = ttk.Label(range_frame, text="数据区间:", font=(UI_FONT, 10, 'bold'))
+        range_label = ttk.Label(range_frame, text="数据区间:", font=('微软雅黑', 10, 'bold'))
         range_label.pack(side=tk.LEFT, padx=5)
         
         single_radio = ttk.Radiobutton(range_frame, text="单日", variable=self.date_range_mode, value="single")
@@ -307,10 +481,10 @@ class ReportGeneratorTool:
         self.end_date.set(today)
 
         # 开始日期
-        start_label = ttk.Label(input_frame, text="开始日期:", font=(UI_FONT, 10, 'bold'))
+        start_label = ttk.Label(input_frame, text="开始日期:", font=('微软雅黑', 10, 'bold'))
         start_label.grid(row=0, column=0, padx=5)
 
-        start_date_entry = ttk.Entry(input_frame, textvariable=self.start_date, width=12, font=(UI_FONT, 10), state='readonly')
+        start_date_entry = ttk.Entry(input_frame, textvariable=self.start_date, width=12, font=('微软雅黑', 10), state='readonly')
         start_date_entry.grid(row=0, column=1, padx=5)
 
         start_calendar_btn = ttk.Button(input_frame, text="📅", width=3, command=lambda: self.popup_calendar('start'))
@@ -322,10 +496,10 @@ class ReportGeneratorTool:
         self.end_date_frame = ttk.Frame(input_frame)
         self.end_date_frame.grid(row=0, column=3, padx=5)
 
-        end_label = ttk.Label(self.end_date_frame, text="结束日期:", font=(UI_FONT, 10, 'bold'))
+        end_label = ttk.Label(self.end_date_frame, text="结束日期:", font=('微软雅黑', 10, 'bold'))
         end_label.pack(side=tk.LEFT, padx=5)
 
-        end_date_entry = ttk.Entry(self.end_date_frame, textvariable=self.end_date, width=12, font=(UI_FONT, 10), state='readonly')
+        end_date_entry = ttk.Entry(self.end_date_frame, textvariable=self.end_date, width=12, font=('微软雅黑', 10), state='readonly')
         end_date_entry.pack(side=tk.LEFT, padx=5)
 
         end_calendar_btn = ttk.Button(self.end_date_frame, text="📅", width=3, command=lambda: self.popup_calendar('end'))
@@ -346,7 +520,7 @@ class ReportGeneratorTool:
 
         # 导入按钮框架（居中显示）
         btn_frame = ttk.Frame(frame)
-        btn_frame.grid(row=3, column=0, pady=5)
+        btn_frame.grid(row=3, column=0, pady=2 if sys.platform == 'darwin' else 5)
         import_btn = ttk.Button(btn_frame, text="开始导入数据", command=self.import_data)
         import_btn.pack()
 
@@ -538,7 +712,13 @@ class ReportGeneratorTool:
         
     def create_data_process_tab(self, parent):
         """创建数据加工 Tab"""
-        frame = ttk.LabelFrame(parent, text="数据加工", padding="5")
+        # 左右对称 padding: (左, 上, 右, 下)
+        if sys.platform == 'darwin':
+            # aqua 主题原生 LabelFrame 自带漂亮边框与 padding，只需要小内边距
+            lf_pad = (2, 1, 2, 1)
+        else:
+            lf_pad = 5
+        frame = ttk.LabelFrame(parent, text="数据加工", padding=lf_pad)
         frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         parent.columnconfigure(0, weight=1)
         parent.rowconfigure(0, weight=1)
@@ -575,15 +755,15 @@ class ReportGeneratorTool:
             try:
                 self.process_status_label.config(text="加工状态：执行中...", foreground="orange")
                 self.process_text.delete(1.0, tk.END)
-                
-                # 从 qzrj_generate_data.sql 文件读取 SQL
-                sql_file = resource_path('prov_generate_data.sql')
+
+                # 从 prov_generate_data.sql 文件读取 SQL（使用绝对路径）
+                sql_file = self.sql_file_path
                 if not os.path.exists(sql_file):
                     raise Exception(f"找不到 SQL 文件：{sql_file}")
-                
+
                 with open(sql_file, 'r', encoding='utf-8') as f:
                     sql_content = f.read()
-                
+
                 # 根据选择动态修改SQL
                 if self.national_flag_var.get() == "all":
                     # 选择"全部"时，移除所有 national_flag='1' 的条件
@@ -591,7 +771,7 @@ class ReportGeneratorTool:
                     sql_content = sql_content.replace("and c.national_flag = '1'", "")
                     sql_content = sql_content.replace("and b.national_flag = '1'", "")
                     sql_content = sql_content.replace("and c.national_flag='1'", "")
-                
+
                 self.process_text.insert(tk.END, f"执行 SQL 脚本：{sql_file}\n\n")
                 
                 conn = duckdb.connect(self.db_path)
@@ -668,13 +848,20 @@ in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realt
         
     def create_data_export_tab(self, parent):
         """创建数据导出 Tab"""
-        frame = ttk.LabelFrame(parent, text="数据导出", padding="10")
+        # 左右对称 padding: (左, 上, 右, 下)
+        if sys.platform == 'darwin':
+            # aqua 主题原生 LabelFrame 自带漂亮边框与 padding，只需要小内边距
+            lf_pad = (2, 1, 2, 1)
+        else:
+            lf_pad = 5
+        inner_pad = (2, 1, 2, 1) if sys.platform == 'darwin' else 5
+        frame = ttk.LabelFrame(parent, text="数据导出", padding=lf_pad)
         frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         parent.columnconfigure(0, weight=1)
         parent.rowconfigure(0, weight=1)
         
         # 模板文件区域
-        template_frame = ttk.LabelFrame(frame, text="模板文件", padding="5")
+        template_frame = ttk.LabelFrame(frame, text="模板文件", padding=inner_pad)
         template_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=2)
         frame.columnconfigure(0, weight=1)
         
@@ -685,7 +872,7 @@ in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realt
         select_template_btn.grid(row=0, column=1, padx=5)
         
         # 导出设置区域
-        export_frame = ttk.LabelFrame(frame, text="导出设置", padding="5")
+        export_frame = ttk.LabelFrame(frame, text="导出设置", padding=inner_pad)
         export_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=2)
         frame.columnconfigure(0, weight=1)
         
@@ -702,30 +889,46 @@ in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realt
             self.national_flag_var.trace('w', lambda *args: self.update_export_filename())
         export_name_label = ttk.Label(export_frame, text="导出文件名:")
         export_name_label.grid(row=0, column=0, sticky=tk.W, pady=2)
-        
+
         export_name_entry = ttk.Entry(export_frame, textvariable=self.export_name_var, width=80)
         export_name_entry.grid(row=0, column=1, sticky=(tk.W, tk.E), pady=2)
         export_frame.columnconfigure(1, weight=1)
-        
-        # 添加路径显示（使用资源目录作为默认导出位置）
-        self.export_path_var = tk.StringVar(value=os.path.join(get_resource_dir(), default_name))
+
+        # ===== 默认导出目录：用户文档目录（可写）=====
+        # macOS 上 cwd 通常是只读的 / 或 /Applications，需要使用用户可写目录
+        home_documents = os.path.expanduser('~/Documents')
+        if os.path.isdir(home_documents) and os.access(home_documents, os.W_OK):
+            default_export_dir = home_documents
+        elif os.path.isdir(os.path.expanduser('~')) and os.access(os.path.expanduser('~'), os.W_OK):
+            default_export_dir = os.path.expanduser('~')
+        else:
+            default_export_dir = self.app_base_dir  # 兜底：应用所在目录
+
+        self._export_dir = default_export_dir
+
+        # 添加路径显示
+        default_full_path = os.path.join(self._export_dir, default_name)
+        self.export_path_var = tk.StringVar(value=default_full_path)
         export_path_label = ttk.Label(export_frame, text="完整路径:")
         export_path_label.grid(row=1, column=0, sticky=tk.W, pady=2)
-        
+
         export_path_entry = ttk.Entry(export_frame, textvariable=self.export_path_var, width=80)
         export_path_entry.grid(row=1, column=1, sticky=(tk.W, tk.E), pady=2)
         export_frame.columnconfigure(1, weight=1)
-        
-        # 文件名变化时更新路径
+
+        # 文件名变化时更新路径（保留目录部分，只替换文件名）
         def update_path(*args):
             filename = self.export_name_var.get()
-            self.export_path_var.set(os.path.join(get_resource_dir(), filename))
-        
+            self.export_path_var.set(os.path.join(self._export_dir, filename))
+
         self.export_name_var.trace('w', update_path)
         
-        # 导出按钮（两个按钮放在同一行，独立按钮框架）
+        # 导出按钮（三个按钮放在同一行，独立按钮框架）
         btn_frame = ttk.Frame(frame)
-        btn_frame.grid(row=2, column=0, pady=5)
+        btn_frame.grid(row=2, column=0, pady=2 if sys.platform == 'darwin' else 5)
+
+        choose_dir_btn = ttk.Button(btn_frame, text="选择保存目录", command=self.choose_export_dir)
+        choose_dir_btn.pack(side=tk.LEFT, padx=5)
 
         export_btn = ttk.Button(btn_frame, text="开始导出报告", command=self.export_report)
         export_btn.pack(side=tk.LEFT, padx=5)
@@ -759,7 +962,13 @@ in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realt
 
     def create_org_management_tab(self, parent):
         """创建机构管理 Tab"""
-        frame = ttk.LabelFrame(parent, text="机构管理", padding="5")
+        # 左右对称 padding: (左, 上, 右, 下)
+        if sys.platform == 'darwin':
+            # aqua 主题原生 LabelFrame 自带漂亮边框与 padding，只需要小内边距
+            lf_pad = (2, 1, 2, 1)
+        else:
+            lf_pad = 5
+        frame = ttk.LabelFrame(parent, text="机构管理", padding=lf_pad)
         frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         parent.columnconfigure(0, weight=1)
         parent.rowconfigure(0, weight=1)
@@ -773,7 +982,7 @@ in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realt
         search_label.pack(side=tk.LEFT, padx=5)
 
         self.org_search_var = tk.StringVar()
-        search_entry = ttk.Entry(search_frame, textvariable=self.org_search_var, width=50)
+        search_entry = ttk.Entry(search_frame, textvariable=self.org_search_var, width=25)
         search_entry.pack(side=tk.LEFT, padx=5)
 
         # 点击搜索框自动清空
@@ -787,7 +996,7 @@ in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realt
 
         # 操作按钮区域
         btn_frame = ttk.Frame(frame)
-        btn_frame.grid(row=1, column=0, pady=5)
+        btn_frame.grid(row=1, column=0, pady=2 if sys.platform == 'darwin' else 5)
 
         add_btn = ttk.Button(btn_frame, text="新增机构", command=self.add_org)
         add_btn.pack(side=tk.LEFT, padx=5)
@@ -1143,12 +1352,14 @@ in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realt
             
     def open_report_dir(self):
         """打开质控报告所在目录：已打开则切换过去，未打开则新建打开"""
-        # 获取导出文件所在目录
-        file_path = self.export_path_var.get()
-        if not file_path:
-            messagebox.showwarning("提示", "未设置导出文件路径")
-            return
-        directory = os.path.dirname(os.path.abspath(file_path))
+        # 获取导出文件所在目录（优先使用 _export_dir，兜底用 export_path_var）
+        directory = self._export_dir if hasattr(self, '_export_dir') else None
+        if not directory:
+            file_path = self.export_path_var.get()
+            if not file_path:
+                messagebox.showwarning("提示", "未设置导出文件路径")
+                return
+            directory = os.path.dirname(os.path.abspath(file_path))
         if not os.path.isdir(directory):
             # 目录不存在，尝试创建后再打开
             try:
@@ -1232,6 +1443,18 @@ in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realt
             # Linux：使用 xdg-open
             import subprocess
             subprocess.Popen(['xdg-open', directory])
+
+    def choose_export_dir(self):
+        """选择报告保存目录"""
+        directory = filedialog.askdirectory(
+            title="选择报告保存目录",
+            initialdir=self._export_dir
+        )
+        if directory:
+            self._export_dir = directory
+            # 重新拼接完整路径
+            filename = self.export_name_var.get()
+            self.export_path_var.set(os.path.join(directory, filename))
 
     def export_report(self):
         """导出报告"""
@@ -1464,9 +1687,31 @@ in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realt
                 
                 self.root.update_idletasks()
                 
+                # 使用用户可写目录 + 文件名组成完整路径
                 export_path = self.export_name_var.get()
-                full_path = os.path.join(get_resource_dir(), export_path)
+                full_path = self.export_path_var.get()
                 self.log_message(f"\n保存文件到：{full_path}...\n")
+
+                # 确保目录存在且可写
+                export_dir = os.path.dirname(full_path)
+                try:
+                    os.makedirs(export_dir, exist_ok=True)
+                    # 测试写入权限
+                    test_file = os.path.join(export_dir, '.write_test_tmp')
+                    with open(test_file, 'w') as tf:
+                        tf.write('test')
+                    os.remove(test_file)
+                except Exception:
+                    # 目录不可写，回退到用户文档目录
+                    fallback_dir = os.path.expanduser('~/Documents')
+                    if os.path.isdir(fallback_dir) and os.access(fallback_dir, os.W_OK):
+                        self.log_message(f"  ⚠ 目标目录不可写，回退到：{fallback_dir}\n")
+                        full_path = os.path.join(fallback_dir, export_path)
+                        self._export_dir = fallback_dir
+                        self.export_path_var.set(full_path)
+                    else:
+                        raise Exception(f"导出目录不可写：{export_dir}\n请使用【选择保存目录】按钮指定一个可写的位置")
+
                 wb.save(full_path)
                 
                 self.export_progress.stop()
@@ -1475,7 +1720,7 @@ in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realt
                 self.log_message(f"✓ 共处理 {processed}/{total_sheets} 个 Sheet 页\n")
                 
                 # 显示带滚动条的消息框
-                messagebox.showinfo("报告生成","导出成功！")
+                messagebox.showinfo("报告生成", f"导出成功！\n\n文件位置：{full_path}")
                 
             except Exception as e:
                 self.export_progress.stop()

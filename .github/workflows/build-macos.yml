@@ -145,6 +145,14 @@ jobs:
           pyinstaller --version
           echo "PyInstaller bootloader 架构:"
           file "$(which pyinstaller)" 2>/dev/null || true
+        env:
+          # 确保 pip 使用正确的架构
+          ARCHFLAGS: "-arch arm64"
+          # 强制 pip 安装 arm64 版本的包
+          PIP_USE_PEP517: "1"
+          # 设置 Python 编码
+          PYTHONIOENCODING: utf-8
+          PYTHONUTF8: 1
 
       - name: 运行 macOS M2 (ARM64) 兼容性验证脚本
         run: |
@@ -175,6 +183,10 @@ jobs:
             echo "❌ 错误：未找到 .app 应用包目录"
             exit 1
           fi
+        env:
+          ARCHFLAGS: "-arch arm64"
+          PYTHONIOENCODING: utf-8
+          PYTHONUTF8: 1
 
       - name: 验证可执行文件架构（确保是 arm64）
         if: success()
@@ -264,6 +276,9 @@ jobs:
           ls -lh "$ZIP_NAME"
           echo "ZIP 条目统计:"
           unzip -l "$ZIP_NAME" | tail -5
+        env:
+          PYTHONIOENCODING: utf-8
+          PYTHONUTF8: 1
 
       - name: 生成 Build README（产物说明）
         if: inputs.upload_artifact

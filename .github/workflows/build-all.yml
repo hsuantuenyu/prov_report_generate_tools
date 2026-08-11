@@ -6,7 +6,7 @@ on:
       python_version:
         description: 'Python 版本（两平台共用，推荐 3.11+）'
         required: true
-        default: '3.12'
+        default: '3.11'
         type: choice
         options:
           - '3.10'
@@ -67,12 +67,21 @@ jobs:
         run: |
           python -m pip install --upgrade pip setuptools wheel
           pip install duckdb pandas openpyxl tkcalendar pyinstaller
+        env:
+          PYTHONIOENCODING: utf-8
+          PYTHONUTF8: 1
 
       - name: 构建兼容性检查
         run: python verify_build_env.py
+        env:
+          PYTHONIOENCODING: utf-8
+          PYTHONUTF8: 1
 
       - name: PyInstaller 构建
         run: python build_exe.py
+        env:
+          PYTHONIOENCODING: utf-8
+          PYTHONUTF8: 1
 
       - name: 验证 EXE 与架构
         run: |
@@ -89,6 +98,9 @@ jobs:
           $mach = [BitConverter]::ToUInt16($bytes, $peOff + 4)
           if ($mach -ne 0x8664) { Write-Host "❌ 架构不符"; exit 1 }
           Write-Host "✅ Windows x64 架构验证通过"
+        env:
+          PYTHONIOENCODING: utf-8
+          PYTHONUTF8: 1
 
       - name: 打包 ZIP 并上传
         if: inputs.upload_artifact
@@ -110,6 +122,9 @@ jobs:
           Python: $(python --version 2>&1)
           PyInstaller: $(pyinstaller --version)
           "@ | Set-Content build_info.txt -Encoding UTF8
+        env:
+          PYTHONIOENCODING: utf-8
+          PYTHONUTF8: 1
 
       - name: 上传 Artifact
         if: inputs.upload_artifact
@@ -147,13 +162,24 @@ jobs:
         run: |
           python -m pip install --upgrade pip setuptools wheel
           pip install duckdb pandas openpyxl tkcalendar pyinstaller
+        env:
+          ARCHFLAGS: "-arch arm64"
+          PIP_USE_PEP517: "1"
+          PYTHONIOENCODING: utf-8
+          PYTHONUTF8: 1
 
       - name: 运行兼容性验证
         run: python verify_macos_build.py
+        env:
+          PYTHONIOENCODING: utf-8
+          PYTHONUTF8: 1
 
       - name: PyInstaller 构建
         env:
           TARGET_ARCH: 'arm64'
+          ARCHFLAGS: "-arch arm64"
+          PYTHONIOENCODING: utf-8
+          PYTHONUTF8: 1
         run: python build_exe.py
 
       - name: 验证 .app 架构
@@ -188,6 +214,9 @@ jobs:
           若提示隔离: xattr -dr com.apple.quarantine "/path/to/${{ env.PROJECT_NAME }}.app"
           EOF
           cat build_info.txt
+        env:
+          PYTHONIOENCODING: utf-8
+          PYTHONUTF8: 1
 
       - name: 上传 Artifact
         if: inputs.upload_artifact
@@ -220,10 +249,18 @@ jobs:
         run: |
           python -m pip install --upgrade pip setuptools wheel
           pip install duckdb pandas openpyxl tkcalendar pyinstaller
+        env:
+          ARCHFLAGS: "-arch arm64"
+          PIP_USE_PEP517: "1"
+          PYTHONIOENCODING: utf-8
+          PYTHONUTF8: 1
 
       - name: PyInstaller 构建（universal2）
         env:
           TARGET_ARCH: 'universal2'
+          ARCHFLAGS: "-arch arm64 -arch x86_64"
+          PYTHONIOENCODING: utf-8
+          PYTHONUTF8: 1
         run: python build_exe.py || true
         # universal2 对非 fat binary 的 .so 会报错，此处允许失败；若失败则退化为 arm64 单体打包
 
@@ -252,6 +289,9 @@ jobs:
           架构: arm64 + x86_64 (通用双架构)
           构建时间: $(date '+%Y-%m-%d %H:%M:%S %Z')
           EOF
+        env:
+          PYTHONIOENCODING: utf-8
+          PYTHONUTF8: 1
 
       - name: 上传 Artifact
         if: inputs.upload_artifact

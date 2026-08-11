@@ -15,15 +15,28 @@ from tkcalendar import Calendar
 warnings.filterwarnings('ignore', message='pandas only supports SQLAlchemy')
 
 
-VERSION = "V1.9"
-BUILD_DATE = "2026-08-07"
+VERSION = "V1.10"
+BUILD_DATE = "2026-08-11"
 
 
-# ===== 跨平台路径解析（参照 qzrj 项目方案）=====
+# ===== 跨平台路径解析 =====
 # PyInstaller 打包后，sys._MEIPASS 指向临时解压目录（只读）
+# exe 所在目录同级放置 db/sql/txt 等可写资源
 # 开发模式下，资源文件在脚本所在目录
 _FROZEN = getattr(sys, 'frozen', False)
-_RESOURCE_DIR = sys._MEIPASS if _FROZEN else os.path.dirname(os.path.abspath(__file__))
+if _FROZEN:
+    _EXE_DIR = os.path.dirname(sys.executable)
+    _RESOURCE_DIR = sys._MEIPASS
+    if sys.platform == 'darwin':
+        # macOS .app: sys.executable = xxx.app/Contents/MacOS/xxx
+        # 资源文件（db/sql/txt）在 .app 同级目录
+        _APP_DIR = os.path.dirname(os.path.dirname(os.path.dirname(_EXE_DIR)))
+    else:
+        # Windows: exe 所在目录即资源目录
+        _APP_DIR = _EXE_DIR
+else:
+    _APP_DIR = os.path.dirname(os.path.abspath(__file__))
+    _RESOURCE_DIR = _APP_DIR
 
 # 数据库完整性检查：必须存在的关键表（缺少任何一个视为数据库损坏）
 _REQUIRED_TABLES = ['org_list']
@@ -43,8 +56,10 @@ def _is_db_valid(db_path):
 
 
 def resolve_resource(filename):
-    """解析只读资源文件路径（SQL 文件、模板等不需要写入的文件）"""
-    return os.path.join(_RESOURCE_DIR, filename)
+    """解析资源文件路径（SQL、模板、数据库等）
+    资源文件放在 _APP_DIR（exe/.app 同级目录），不在 sys._MEIPASS 内部。
+    """
+    return os.path.join(_APP_DIR, filename)
 
 
 def get_writable_db_path(db_name):
@@ -151,7 +166,7 @@ class ReportGeneratorTool:
         self.root.title(f"疾控中心下发报告生成辅助工具 {VERSION} ({BUILD_DATE})")
 
         # 确定基准目录
-        self.app_base_dir = _RESOURCE_DIR
+        self.app_base_dir = _APP_DIR
 
         # ===== 窗口大小 =====
         screen_width = root.winfo_screenwidth()
@@ -894,16 +909,9 @@ in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realt
         export_name_entry.grid(row=0, column=1, sticky=(tk.W, tk.E), pady=2)
         export_frame.columnconfigure(1, weight=1)
 
-        # ===== 默认导出目录：用户文档目录（可写）=====
-        # macOS 上 cwd 通常是只读的 / 或 /Applications，需要使用用户可写目录
-        home_documents = os.path.expanduser('~/Documents')
-        if os.path.isdir(home_documents) and os.access(home_documents, os.W_OK):
-            default_export_dir = home_documents
-        elif os.path.isdir(os.path.expanduser('~')) and os.access(os.path.expanduser('~'), os.W_OK):
-            default_export_dir = os.path.expanduser('~')
-        else:
-            default_export_dir = self.app_base_dir  # 兜底：应用所在目录
-
+        # ===== 默认导出目录：优化策略 =====
+        # 优先级：Windows 特殊处理 > Documents > 桌面 > 用户主目录 > 兜底
+        default_export_dir = self._find_writable_export_dir()
         self._export_dir = default_export_dir
 
         # 添加路径显示
@@ -1444,6 +1452,57 @@ in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realt
             import subprocess
             subprocess.Popen(['xdg-open', directory])
 
+    def _find_writable_export_dir(self):
+        """寻找一个可写的默认导出目录
+        Windows：优先用 SHGetFolderPath 获取真实 Documents 路径（支持中文系统）
+        通用：Documents → 桌面 → 用户主目录 → 兜底到 app_base_dir
+        """
+        candidates = []
+
+        if sys.platform == 'win32':
+            # 用 Windows API 获取真实路径（兼容"文档"等本地化名称）
+            try:
+                import ctypes
+                from ctypes import wintypes
+                CSIDL_PERSONAL = 0x0005       # Documents
+                CSIDL_DESKTOPDIRECTORY = 0x0010  # 桌面
+                SHGFP_TYPE_CURRENT = 0
+
+                buf = ctypes.create_unicode_buffer(wintypes.MAX_PATH)
+                ctypes.windll.shell32.SHGetFolderPathW(
+                    0, CSIDL_PERSONAL, 0, SHGFP_TYPE_CURRENT, buf
+                )
+                if buf.value:
+                    candidates.append(buf.value)
+
+                buf2 = ctypes.create_unicode_buffer(wintypes.MAX_PATH)
+                ctypes.windll.shell32.SHGetFolderPathW(
+                    0, CSIDL_DESKTOPDIRECTORY, 0, SHGFP_TYPE_CURRENT, buf2
+                )
+                if buf2.value:
+                    candidates.append(buf2.value)
+            except Exception:
+                pass
+
+        # 通用候选（跨平台）
+        home = os.path.expanduser('~')
+        candidates.extend([
+            os.path.join(home, 'Documents'),
+            os.path.join(home, 'Desktop'),
+            os.path.join(home, '桌面'),
+            home,
+        ])
+
+        # 逐个检查是否存在且可写
+        for dir_path in candidates:
+            if dir_path and os.path.isdir(dir_path) and os.access(dir_path, os.W_OK):
+                return dir_path
+
+        # 最终兜底
+        if os.access(self.app_base_dir, os.W_OK):
+            return self.app_base_dir
+        return home  # home 目录几乎总是可写的
+
     def choose_export_dir(self):
         """选择报告保存目录"""
         directory = filedialog.askdirectory(
@@ -1953,8 +2012,8 @@ from org_list a
          left join prov_column_level_org g on g.org_code = a.org_code and g.column_level = '3'
          left join prov_column_level_org h on h.org_code = a.org_code and h.column_level = 'update_1'
          left join prov_column_level_org i on i.org_code = a.org_code and i.column_level = 'update_3'
-         left join prov_column_level_org j on j.org_code = a.org_code and j.column_level = 'version_2_column_level__1'
-         left join prov_column_level_org k on k.org_code = a.org_code and k.column_level = 'version_2_column_level__3'
+         left join prov_column_level_org j on j.org_code = a.org_code and j.column_level = 'version_2_column_level_1'
+         left join prov_column_level_org k on k.org_code = a.org_code and k.column_level = 'version_2_column_level_3'
          left join prov_association_org l on l.org_code = a.org_code and l.association_table = 'pro_base_person_ylfw'
          left join prov_association_org m on m.org_code = a.org_code and m.association_table = 'pro_opt_diagnosisbreakdown,pro_ipt_diagnosisbreakdown'
          left join prov_association_org n on n.org_code = a.org_code and n.association_table = 'all'

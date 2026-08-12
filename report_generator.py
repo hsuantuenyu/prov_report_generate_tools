@@ -56,10 +56,22 @@ def _is_db_valid(db_path):
 
 
 def resolve_resource(filename):
-    """解析资源文件路径（SQL、模板、数据库等）
-    资源文件放在 _APP_DIR（exe/.app 同级目录），不在 sys._MEIPASS 内部。
+    """解析只读资源文件路径（SQL、模板、版本日志等）
+    查找顺序：
+      1. _APP_DIR（exe/.app 同级目录）—— build_exe.py 复制到 dist 的外部文件
+      2. _RESOURCE_DIR（PyInstaller bundle 内部 sys._MEIPASS）—— spec datas 打包的文件
+    这样用户如果只把 .app 拖到 /Applications/（未携带外部资源），仍然能从 bundle 内读取只读资源。
     """
-    return os.path.join(_APP_DIR, filename)
+    # 1. 优先外部同级目录（方便用户替换 SQL/模板而无需重新打包）
+    sibling = os.path.join(_APP_DIR, filename)
+    if os.path.isfile(sibling):
+        return sibling
+    # 2. 回退 bundle 内部（PyInstaller datas 打进的文件）
+    internal = os.path.join(_RESOURCE_DIR, filename)
+    if os.path.isfile(internal):
+        return internal
+    # 都没有则返回外部路径，让上层给出"找不到 xxx 文件：path"的报错提示
+    return sibling
 
 
 def get_writable_db_path(db_name):

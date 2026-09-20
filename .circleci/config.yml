@@ -14,9 +14,6 @@ orbs:
 # Pipeline parameters（通过 API 或手动触发时传入，等价于 GitHub Actions inputs）
 # See: `https://circleci.com/docs/reference/configuration-reference/#parameters`
 parameters:
-  build_universal2:
-    type: boolean
-    default: false       # 默认只构建 arm64，传入 true 时同时构建 universal2
   python_version:
     type: enum
     enum: ["3.11", "3.12", "3.13"]
@@ -146,88 +143,6 @@ jobs:
           path: build_info.txt
           destination: macOS-arm64-build-info
 
-      # 持久化到 workspace，供 universal2 job 复用
-      - persist_to_workspace:
-          root: .
-          paths:
-            - dist
-            - build_info.txt
-
-  # ===== macOS universal2 构建（arm64 + x86_64 通用，可选） =====
-  build-macos-universal2:
-    macos:
-      xcode: "16.4.0"
-    resource_class: m2.medium.gen1
-    environment:
-      PROJECT_NAME: 疾控中心下发报告生成工具
-      DIST_DIR: dist
-      PYTHONIOENCODING: utf-8
-      PYTHONUTF8: "1"
-    steps:
-      - checkout
-      # 复用 arm64 job 的 workspace（dist 目录等）
-      - attach_workspace:
-          at: .
-
-      - python/install-packages:
-          pkg-manager: pip
-
-      - run:
-          name: PyInstaller 构建（universal2 双架构）
-          command: python3 build_exe.py
-          environment:
-            TARGET_ARCH: "universal2"
-            ARCHFLAGS: "-arch arm64 -arch x86_64"
-
-      - run:
-          name: 验证 .app 架构
-          command: |
-            APP_BIN="$DIST_DIR/${PROJECT_NAME}.app/Contents/MacOS/${PROJECT_NAME}"
-            if [ ! -f "$APP_BIN" ]; then
-              echo "❌ 错误：未找到 .app 可执行文件"
-              exit 1
-            fi
-            echo "=== file 命令 ==="
-            file "$APP_BIN"
-            echo "=== lipo -info（架构切片） ==="
-            lipo -info "$APP_BIN" 2>/dev/null || true
-            xattr -dr com.apple.quarantine "$DIST_DIR/${PROJECT_NAME}.app" 2>/dev/null || true
-
-      - run:
-          name: 打包 ZIP + 生成构建说明
-          command: |
-            TS=$(date +"%Y%m%d_%H%M%S")
-            VER=$(python3 -c "import re; c=open('report_generator.py',encoding='utf-8').read(); m=re.search(r'VERSION\s*=\s*\x22([^\x22]+)\x22', c); print(m.group(1) if m else 'Unknown')")
-            ZIP="${PROJECT_NAME}_${VER}_macOS_universal2_${TS}.zip"
-            echo "应用版本: $VER"
-            echo "ZIP 文件名: $ZIP"
-
-            cd "$DIST_DIR"
-            zip -r "../$ZIP" ./* -x "*.pyc" "__pycache__/*"
-            cd ..
-
-            printf '%s\n' \
-              "${PROJECT_NAME} macOS universal2 Build Info" \
-              "========================================================" \
-              "版本: $VER" \
-              "构建时间: $(date '+%Y-%m-%d %H:%M:%S %Z')" \
-              "macOS: $(sw_vers -productVersion)" \
-              "Python: $(python3 --version | awk '{print $2}')" \
-              "目标架构: universal2 (arm64 + x86_64 通用)" \
-              "========================================================" \
-              "适用: 同时兼容 Apple Silicon 和 Intel Mac" \
-              "========================================================" \
-              > build_info_universal2.txt
-            cat build_info_universal2.txt
-
-      - store_artifacts:
-          path: dist
-          destination: macOS-universal2-app
-
-      - store_artifacts:
-          path: build_info_universal2.txt
-          destination: macOS-universal2-build-info
-
 # Orchestrate jobs using workflows
 # See: `https://circleci.com/docs/guides/orchestrate/workflows/`
 #      & `https://circleci.com/docs/reference/configuration-reference/#workflows`
@@ -235,7 +150,3 @@ workflows:
   build-macos:
     jobs:
       - build-macos-arm64
-      - build-macos-universal2:
-          requires:
-            - build-macos-arm64
-          when: << pipeline.parameters.build_universal2 >>

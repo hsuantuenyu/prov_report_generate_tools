@@ -104,13 +104,15 @@ jobs:
             zip -r -y "../$ZIP" . -x "*.pyc" "__pycache__/*"
             cd ..
 
-            # 把 ZIP 名写入环境变量供后续步骤使用
+            # 复制一份固定名，供 store_artifacts 使用（避免环境变量展开问题）
+            cp "$ZIP" app-macos-arm64.zip
+
             echo "export ZIP_FILE=$ZIP" >> $BASH_ENV
 
       # 6. 上传构建产物到 Artifacts（只上传 zip 一个文件）
-      - store_artifacts:
-          path: /Users/distiller/project/app-macos-arm64.zip
-          destination: macOS-arm64-app.zip
+       - store_artifacts:
+          path: app-macos-arm64.zip
+          destination: app-macos-arm64.zip
 
 workflows:
   build:

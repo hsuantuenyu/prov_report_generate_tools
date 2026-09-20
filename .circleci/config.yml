@@ -98,7 +98,7 @@ jobs:
           name: 打包 ZIP
           command: |
             TS=$(date +"%Y%m%d_%H%M%S")
-            VER=$(python3 -c "import re; c=open('report_generator.py',encoding='utf-8').read(); m=re.search(r'VERSION\s*=\s*\"([^\"]+)\"', c); print(m.group(1) if m else 'Unknown')")
+            VER=$(python3 -c "import re; c=open('report_generator.py',encoding='utf-8').read(); m=re.search(r'VERSION\s*=\s*\x22([^\x22]+)\x22', c); print(m.group(1) if m else 'Unknown')")
             ZIP="${PROJECT_NAME}_${VER}_macOS_arm64_M2_${TS}.zip"
             echo "ZIP: $ZIP"
             echo "export APP_VERSION=$VER" >> $BASH_ENV
@@ -106,7 +106,7 @@ jobs:
             cd "$DIST_DIR"
             zip -r "../$ZIP" ./* -x "*.pyc" "__pycache__/*"
             cd ..
-            cat > build_info.txt <<EOF
+            cat > build_info.txt \<<EOF
             ${PROJECT_NAME} macOS arm64 Build Info
             版本: $VER
             构建时间: $(date '+%Y-%m-%d %H:%M:%S %Z')
@@ -167,14 +167,14 @@ jobs:
           name: 打包 ZIP
           command: |
             TS=$(date +"%Y%m%d_%H%M%S")
-            VER=$(python3 -c "import re; c=open('report_generator.py',encoding='utf-8').read(); m=re.search(r'VERSION\s*=\s*\"([^\"]+)\"', c); print(m.group(1) if m else 'Unknown')")
+            VER=$(python3 -c "import re; c=open('report_generator.py',encoding='utf-8').read(); m=re.search(r'VERSION\s*=\s*\x22([^\x22]+)\x22', c); print(m.group(1) if m else 'Unknown')")
             ZIP="${PROJECT_NAME}_${VER}_macOS_universal2_${TS}.zip"
             echo "export APP_VERSION=$VER" >> $BASH_ENV
             echo "export ZIP_NAME=$ZIP" >> $BASH_ENV
             cd "$DIST_DIR"
             zip -r "../$ZIP" ./* -x "*.pyc" "__pycache__/*"
             cd ..
-            cat > build_info.txt <<EOF
+            cat > build_info.txt \<<EOF
             ${PROJECT_NAME} macOS universal2 Build Info
             版本: $VER
             架构: arm64 + x86_64 (通用双架构)

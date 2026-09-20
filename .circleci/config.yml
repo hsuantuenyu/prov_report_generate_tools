@@ -80,7 +80,6 @@ jobs:
             echo "应用版本: $VER"
             echo "ZIP 文件名: $ZIP"
 
-            # 生成构建说明并放进 dist（这样解压后和 .app 同目录，用户一眼可见）
             printf '%s\n' \
               "${PROJECT_NAME} macOS arm64 Build Info" \
               "========================================================" \
@@ -99,18 +98,16 @@ jobs:
               > "$DIST_DIR/build_info.txt"
             cat "$DIST_DIR/build_info.txt"
 
-            # 关键：-y 保留符号链接，否则 .app 结构会损坏
             cd "$DIST_DIR"
             zip -r -y "../$ZIP" . -x "*.pyc" "__pycache__/*"
             cd ..
 
-            # 复制一份固定名，供 store_artifacts 使用（避免环境变量展开问题）
             cp "$ZIP" app-macos-arm64.zip
 
             echo "export ZIP_FILE=$ZIP" >> $BASH_ENV
 
       # 6. 上传构建产物到 Artifacts（只上传 zip 一个文件）
-       - store_artifacts:
+      - store_artifacts:
           path: app-macos-arm64.zip
           destination: app-macos-arm64.zip
 

@@ -1,58 +1,47 @@
 version: 2.1
 
-# ===== 参数：等价于 GitHub Actions 的 workflow_dispatch inputs =====
+# ===== 触发参数（通过 API 或手动触发时传入） =====
 parameters:
+  build_universal2:
+    type: boolean
+    default: false       # 默认只构建 arm64，需要 universal2 时传入 true
   python_version:
     type: enum
-    enum: ["3.10", "3.11", "3.12", "3.13"]
+    enum: ["3.11", "3.12", "3.13"]
     default: "3.12"
-  platforms:
-    type: enum
-    enum: ["全部", "仅 Windows", "仅 macOS (M1/M2 arm64)", "仅 macOS (universal2)"]
-    default: "全部"
-  upload_artifact:
-    type: boolean
-    default: true
-  artifact_retention_days:
-    type: enum
-    enum: ["1","3", "7", "14", "30", "60", "90"]
-    default: "3"
 
-# ===== 复用配置 =====
+# ===== 复用：依赖安装步骤 =====
+commands:
+  install-deps:
+    description: "安装 Python 依赖（duckdb/pandas/openpyxl/tkcalendar/pyinstaller）"
+    steps:
+      - run:
+          name: 安装 Python 依赖
+          command: |
+            python3 -m pip install --upgrade pip setuptools wheel
+            pip3 install duckdb pandas openpyxl tkcalendar pyinstaller
+      - run:
+          name: 显示已安装依赖版本
+          command: |
+            pip3 list 2>/dev/null | grep -iE "duckdb|pandas|openpyxl|tkcalendar|pyinstaller" || true
+            pyinstaller --version || true
+
+# ===== Executor：macOS Apple Silicon (M2) =====
 executors:
   macos-arm64:
     macos:
       xcode: "16.4.0"
-    resource_class: m4pro.medium   # Apple Silicon (M 系列) 资源类
-  macos-intel:
-    macos:
-      xcode: "16.4.0"
-    resource_class: macos.m1.medium.gen1  # 如遇到仅 Intel 兼容的工具可用
+    resource_class: m2.medium.gen1   # Apple Silicon M2，4 vCPU / 8GB
+    environment:
+      PROJECT_NAME: 疾控中心下发报告生成工具
+      DIST_DIR: dist
+      PYTHONIOENCODING: utf-8
+      PYTHONUTF8: "1"
 
-# ===== 环境变量 =====
-environment:
-  PROJECT_NAME: 疾控中心下发报告生成工具
-  DIST_DIR: dist
-  PYTHONIOENCODING: utf-8
-  PYTHONUTF8: "1"
-
+# ===== Jobs =====
 jobs:
 
-  # ===== Windows x64 构建（CircleCI 免费版无 Windows executor，需付费或自建 runner） =====
-  build-windows:
-    docker:
-      - image: cimg/python:<< pipeline.parameters.python_version >>
-    resource_class: medium
-    steps:
-      - checkout
-      - run:
-          name: 检查是否支持 Windows
-          command: |
-            echo "⚠️ CircleCI 免费版不提供 Windows executor。"
-            echo "如需构建 Windows 版本，请使用付费 Windows executor 或自建 runner。"
-            exit 1
-
-  # ===== macOS arm64 构建 =====
+  # ----- macOS arm64 构建（主产物，M1/M2/M3 原生） -----
   build-macos-arm64:
     executor: macos-arm64
     steps:
@@ -61,24 +50,23 @@ jobs:
       - run:
           name: 显示 Runner 信息
           command: |
-            echo "Runner: $(uname -m)"
+            echo "=== Runner 硬件信息 ==="
+            echo "架构: $(uname -m)"
             echo "macOS: $(sw_vers -productVersion)"
+            echo "Xcode: $(xcodebuild -version 2>/dev/null | head -1 || echo 'n/a')"
+            echo ""
+            echo "=== Python 信息 ==="
+            python3 --version
+            echo "Python 路径: $(which python3)"
+
+      - install-deps
 
       - run:
-          name: 安装 Python 依赖
-          command: |
-            python3 -m pip install --upgrade pip setuptools wheel
-            pip3 install duckdb pandas openpyxl tkcalendar pyinstaller
-          environment:
-            ARCHFLAGS: "-arch arm64"
-            PIP_USE_PEP517: "1"
-
-      - run:
-          name: 运行兼容性验证
+          name: 运行 macOS 兼容性验证
           command: python3 verify_macos_build.py
 
       - run:
-          name: PyInstaller 构建
+          name: PyInstaller 构建（arm64 原生）
           command: python3 build_exe.py
           environment:
             TARGET_ARCH: "arm64"
@@ -88,68 +76,83 @@ jobs:
           name: 验证 .app 架构
           command: |
             APP_BIN="$DIST_DIR/${PROJECT_NAME}.app/Contents/MacOS/${PROJECT_NAME}"
-            if [ ! -f "$APP_BIN" ]; then echo "❌ APP 未找到"; exit 1; fi
+            if [ ! -f "$APP_BIN" ]; then
+              echo "❌ 错误：未找到 .app 可执行文件: $APP_BIN"
+              ls -la "$DIST_DIR/${PROJECT_NAME}.app/Contents/MacOS/" 2>/dev/null || true
+              exit 1
+            fi
+            echo "=== file 命令（确认 Mach-O 架构） ==="
             file "$APP_BIN"
-            if ! file "$APP_BIN" | grep -q "arm64"; then echo "❌ 架构不符"; exit 1; fi
+            if ! file "$APP_BIN" | grep -q "arm64"; then
+              echo "❌ 架构不符：期望 arm64"
+              exit 1
+            fi
             echo "✅ Apple Silicon arm64 架构验证通过"
             xattr -dr com.apple.quarantine "$DIST_DIR/${PROJECT_NAME}.app" 2>/dev/null || true
 
       - run:
-          name: 打包 ZIP
+          name: 打包 ZIP + 生成构建说明
           command: |
             TS=$(date +"%Y%m%d_%H%M%S")
             VER=$(python3 -c "import re; c=open('report_generator.py',encoding='utf-8').read(); m=re.search(r'VERSION\s*=\s*\x22([^\x22]+)\x22', c); print(m.group(1) if m else 'Unknown')")
             ZIP="${PROJECT_NAME}_${VER}_macOS_arm64_M2_${TS}.zip"
-            echo "ZIP: $ZIP"
-            echo "export APP_VERSION=$VER" >> $BASH_ENV
-            echo "export ZIP_NAME=$ZIP" >> $BASH_ENV
+            echo "应用版本: $VER"
+            echo "ZIP 文件名: $ZIP"
+
             cd "$DIST_DIR"
             zip -r "../$ZIP" ./* -x "*.pyc" "__pycache__/*"
             cd ..
-            cat > build_info.txt \<<EOF
-            ${PROJECT_NAME} macOS arm64 Build Info
-            版本: $VER
-            构建时间: $(date '+%Y-%m-%d %H:%M:%S %Z')
-            macOS: $(sw_vers -productVersion)
-            Python: $(python3 --version | awk '{print $2}')
-            PyInstaller: $(pyinstaller --version)
-            首次打开: 双击 .app 或右键→打开
-            若提示隔离: xattr -dr com.apple.quarantine "/path/to/${PROJECT_NAME}.app"
-            EOF
+
+            # 用 printf 代替 heredoc，避免 YAML 块缩进污染内容
+            printf '%s\n' \
+              "${PROJECT_NAME} macOS arm64 Build Info" \
+              "========================================================" \
+              "版本: $VER" \
+              "构建时间: $(date '+%Y-%m-%d %H:%M:%S %Z')" \
+              "macOS: $(sw_vers -productVersion)" \
+              "Python: $(python3 --version | awk '{print $2}')" \
+              "PyInstaller: $(pyinstaller --version 2>/dev/null || echo 'n/a')" \
+              "目标架构: arm64 (Apple Silicon M1/M2/M3 原生)" \
+              "========================================================" \
+              "首次打开方法:" \
+              "  方式1: 双击 .app 直接打开（已移除隔离属性）" \
+              "  方式2: 若被阻止，请右键 .app → 打开 → 点击\"打开\"" \
+              "  方式3: 终端执行 xattr -dr com.apple.quarantine \"/path/to/${PROJECT_NAME}.app\"" \
+              "========================================================" \
+              "依赖说明:" \
+              "  所有 Python 依赖（duckdb/pandas/openpyxl/tkcalendar/tcl/tk）已打包进 .app" \
+              "  无需额外安装 Python 环境" \
+              "========================================================" \
+              > build_info.txt
             cat build_info.txt
 
       - store_artifacts:
-          path: ~/project/dist
+          path: dist
           destination: macOS-arm64-app
 
       - store_artifacts:
-          path: ~/project/build_info.txt
+          path: build_info.txt
           destination: macOS-arm64-build-info
 
       - persist_to_workspace:
-          root: ~/project
+          root: .
           paths:
-            - "*.zip"
+            - dist
             - build_info.txt
 
-  # ===== macOS universal2 构建 =====
+  # ----- macOS universal2 构建（arm64 + x86_64 通用，可选） -----
   build-macos-universal2:
     executor: macos-arm64
     steps:
       - checkout
+      - attach_workspace:
+          at: .
+
+      - install-deps
 
       - run:
-          name: 安装 Python 依赖
-          command: |
-            python3 -m pip install --upgrade pip setuptools wheel
-            pip3 install duckdb pandas openpyxl tkcalendar pyinstaller
-          environment:
-            ARCHFLAGS: "-arch arm64"
-            PIP_USE_PEP517: "1"
-
-      - run:
-          name: PyInstaller 构建（universal2）
-          command: python3 build_exe.py || true
+          name: PyInstaller 构建（universal2 双架构）
+          command: python3 build_exe.py
           environment:
             TARGET_ARCH: "universal2"
             ARCHFLAGS: "-arch arm64 -arch x86_64"
@@ -158,72 +161,57 @@ jobs:
           name: 验证 .app 架构
           command: |
             APP_BIN="$DIST_DIR/${PROJECT_NAME}.app/Contents/MacOS/${PROJECT_NAME}"
-            if [ ! -f "$APP_BIN" ]; then echo "❌ APP 未找到"; exit 1; fi
+            if [ ! -f "$APP_BIN" ]; then
+              echo "❌ 错误：未找到 .app 可执行文件"
+              exit 1
+            fi
+            echo "=== file 命令 ==="
             file "$APP_BIN"
-            echo "架构: $(lipo -info "$APP_BIN" 2>/dev/null || true)"
+            echo "=== lipo -info（架构切片） ==="
+            lipo -info "$APP_BIN" 2>/dev/null || true
             xattr -dr com.apple.quarantine "$DIST_DIR/${PROJECT_NAME}.app" 2>/dev/null || true
 
       - run:
-          name: 打包 ZIP
+          name: 打包 ZIP + 生成构建说明
           command: |
             TS=$(date +"%Y%m%d_%H%M%S")
             VER=$(python3 -c "import re; c=open('report_generator.py',encoding='utf-8').read(); m=re.search(r'VERSION\s*=\s*\x22([^\x22]+)\x22', c); print(m.group(1) if m else 'Unknown')")
             ZIP="${PROJECT_NAME}_${VER}_macOS_universal2_${TS}.zip"
-            echo "export APP_VERSION=$VER" >> $BASH_ENV
-            echo "export ZIP_NAME=$ZIP" >> $BASH_ENV
+            echo "应用版本: $VER"
+            echo "ZIP 文件名: $ZIP"
+
             cd "$DIST_DIR"
             zip -r "../$ZIP" ./* -x "*.pyc" "__pycache__/*"
             cd ..
-            cat > build_info.txt \<<EOF
-            ${PROJECT_NAME} macOS universal2 Build Info
-            版本: $VER
-            架构: arm64 + x86_64 (通用双架构)
-            构建时间: $(date '+%Y-%m-%d %H:%M:%S %Z')
-            EOF
+
+            printf '%s\n' \
+              "${PROJECT_NAME} macOS universal2 Build Info" \
+              "========================================================" \
+              "版本: $VER" \
+              "构建时间: $(date '+%Y-%m-%d %H:%M:%S %Z')" \
+              "macOS: $(sw_vers -productVersion)" \
+              "Python: $(python3 --version | awk '{print $2}')" \
+              "目标架构: universal2 (arm64 + x86_64 通用)" \
+              "========================================================" \
+              "适用: 同时兼容 Apple Silicon 和 Intel Mac" \
+              "========================================================" \
+              > build_info_universal2.txt
+            cat build_info_universal2.txt
 
       - store_artifacts:
-          path: ~/project/dist
+          path: dist
           destination: macOS-universal2-app
 
       - store_artifacts:
-          path: ~/project/build_info.txt
+          path: build_info_universal2.txt
           destination: macOS-universal2-build-info
 
-# ===== Workflows：等价于 GitHub Actions 的 jobs 与 if 条件 =====
+# ===== Workflows =====
 workflows:
-  build-all-platforms:
-    jobs:
-      - build-windows:
-          filters:
-            branches:
-              only: [main, master]
-      - build-macos-arm64:
-          filters:
-            branches:
-              only: [main, master]
-      - build-macos-universal2:
-          filters:
-            branches:
-              only: [main, master]
-    when: << pipeline.parameters.platforms >>
-
-  # 仅 macOS arm64
-  build-macos-arm64-only:
+  build-macos:
     jobs:
       - build-macos-arm64
-    when:
-      equal: [ << pipeline.parameters.platforms >>, "仅 macOS (M1/M2 arm64)" ]
-
-  # 仅 macOS universal2
-  build-macos-universal2-only:
-    jobs:
-      - build-macos-universal2
-    when:
-      equal: [ << pipeline.parameters.platforms >>, "仅 macOS (universal2)" ]
-
-  # 仅 Windows
-  build-windows-only:
-    jobs:
-      - build-windows
-    when:
-      equal: [ << pipeline.parameters.platforms >>, "仅 Windows" ]
+      - build-macos-universal2:
+          requires:
+            - build-macos-arm64
+          when: << pipeline.parameters.build_universal2 >>

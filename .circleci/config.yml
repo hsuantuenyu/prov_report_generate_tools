@@ -1,152 +1,64 @@
-# Use the latest 2.1 version of CircleCI pipeline process engine.
-# See: `https://circleci.com/docs/reference/configuration-reference/`
-
 version: 2.1
 
-# Orbs are reusable packages of CircleCI configuration that you may share across
-# projects, enabling you to create encapsulated, parameterized commands, jobs,
-# and executors that can be used across multiple projects.
-# See: `https://circleci.com/docs/orbs/use/orb-intro/`
-orbs:
-  # See the Python orb documentation here: `https://circleci.com/developer/orbs/orb/circleci/python`
-  python: circleci/python@2.1.1
-
-# Pipeline parameters（通过 API 或手动触发时传入，等价于 GitHub Actions inputs）
-# See: `https://circleci.com/docs/reference/configuration-reference/#parameters`
-parameters:
-  python_version:
-    type: enum
-    enum: ["3.11", "3.12", "3.13"]
-    default: "3.12"
-
-# Define jobs to be invoked later in a workflow.
-# See: `https://circleci.com/docs/guides/orchestrate/jobs-steps/#jobs-overview`
-#      & `https://circleci.com/docs/reference/configuration-reference/#jobs`
 jobs:
-
-  # ===== macOS arm64 构建（主产物，M1/M2/M3 原生） =====
   build-macos-arm64:
-    # 使用 macOS Apple Silicon executor 构建 .app 应用包
-    # Docker executor (cimg/python) 是 Linux 环境，无法构建 macOS .app
-    # See: `https://circleci.com/docs/guides/execution-managed/executor-intro/`
     macos:
-      xcode: "16.4.0"
-    resource_class: m2.medium.gen1   # Apple Silicon M2，4 vCPU / 8GB
-    environment:
-      PROJECT_NAME: 疾控中心下发报告生成工具
-      DIST_DIR: dist
-      PYTHONIOENCODING: utf-8
-      PYTHONUTF8: "1"
-
-    # Add steps to the job
-    # See: `https://circleci.com/docs/guides/orchestrate/jobs-steps/#steps-overview`
+      xcode: "16.0"
+    resource_class: m4pro.medium   # Apple Silicon (arm64) 资源类
     steps:
-      # Checkout the code as the first step.
       - checkout
 
+      # 1. 查看环境，确认是 arm64 而不是 Rosetta
       - run:
-          name: 显示 Runner 硬件信息
+          name: Verify macOS ARM64 environment
           command: |
-            echo "=== 硬件信息 ==="
-            echo "架构: $(uname -m)"
-            echo "macOS: $(sw_vers -productVersion)"
-            echo "Xcode: $(xcodebuild -version 2>/dev/null | head -1 || echo 'n/a')"
-            echo ""
-            echo "=== Python 信息 ==="
+            sw_vers
+            uname -m
             python3 --version
-            echo "Python 路径: $(which python3)"
+            python3 -c "import platform; print('machine:', platform.machine())"
 
-      # 使用 Python orb 安装 requirements.txt 中的依赖
-      # See: `https://circleci.com/developer/orbs/orb/circleci/python`
-      - python/install-packages:
-          pkg-manager: pip
-
+      # 2. 安装项目依赖 + PyInstaller
       - run:
-          name: 验证依赖安装
+          name: Install dependencies
           command: |
-            pip3 list 2>/dev/null | grep -iE "duckdb|pandas|openpyxl|tkcalendar|pyinstaller" || true
-            echo ""
-            echo "PyInstaller 版本: $(pyinstaller --version)"
+            python3 -m pip install --upgrade pip
+            python3 -m pip install pyinstaller
+            # 如果你的项目有 requirements.txt，取消下面注释
+            # python3 -m pip install -r requirements.txt
 
+      # 3. 执行你的打包脚本
       - run:
-          name: 运行 macOS 兼容性验证
-          command: python3 verify_macos_build.py
-
-      - run:
-          name: PyInstaller 构建（arm64 原生）
-          command: python3 build_exe.py
-          environment:
-            TARGET_ARCH: "arm64"
-            ARCHFLAGS: "-arch arm64"
-
-      - run:
-          name: 验证 .app 架构
+          name: Build .app with build_exe.py
           command: |
-            APP_BIN="$DIST_DIR/${PROJECT_NAME}.app/Contents/MacOS/${PROJECT_NAME}"
-            if [ ! -f "$APP_BIN" ]; then
-              echo "❌ 错误：未找到 .app 可执行文件: $APP_BIN"
-              ls -la "$DIST_DIR/${PROJECT_NAME}.app/Contents/MacOS/" 2>/dev/null || true
-              exit 1
+            python3 build_exe.py
+
+      # 4. 校验产物架构（确保是 arm64 原生）
+      - run:
+          name: Verify app architecture
+          command: |
+            APP="dist/疾控中心下发报告生成工具.app"
+            BIN="$APP/Contents/MacOS/疾控中心下发报告生成工具"
+            if [ -f "$BIN" ]; then
+              lipo -info "$BIN"
+              file "$BIN"
+            else
+              echo "未找到可执行文件，列出 Contents/MacOS："
+              ls -la "$APP/Contents/MacOS/" || true
             fi
-            echo "=== file 命令（确认 Mach-O 架构） ==="
-            file "$APP_BIN"
-            if ! file "$APP_BIN" | grep -q "arm64"; then
-              echo "❌ 架构不符：期望 arm64"
-              exit 1
-            fi
-            echo "✅ Apple Silicon arm64 架构验证通过"
-            xattr -dr com.apple.quarantine "$DIST_DIR/${PROJECT_NAME}.app" 2>/dev/null || true
 
+      # 5. 把 dist 打成 zip（保留 .app 的符号链接和权限，方便本地直接解压运行）
       - run:
-          name: 打包 ZIP + 生成构建说明
+          name: Package dist into zip
           command: |
-            TS=$(date +"%Y%m%d_%H%M%S")
-            VER=$(python3 -c "import re; c=open('report_generator.py',encoding='utf-8').read(); m=re.search(r'VERSION\s*=\s*\x22([^\x22]+)\x22', c); print(m.group(1) if m else 'Unknown')")
-            ZIP="${PROJECT_NAME}_${VER}_macOS_arm64_M2_${TS}.zip"
-            echo "应用版本: $VER"
-            echo "ZIP 文件名: $ZIP"
+            cd dist
+            zip -r -y ../app-macos-arm64.zip .
 
-            cd "$DIST_DIR"
-            zip -r "../$ZIP" ./* -x "*.pyc" "__pycache__/*"
-            cd ..
-
-            # 用 printf 代替 heredoc，避免 YAML 块缩进污染内容
-            printf '%s\n' \
-              "${PROJECT_NAME} macOS arm64 Build Info" \
-              "========================================================" \
-              "版本: $VER" \
-              "构建时间: $(date '+%Y-%m-%d %H:%M:%S %Z')" \
-              "macOS: $(sw_vers -productVersion)" \
-              "Python: $(python3 --version | awk '{print $2}')" \
-              "PyInstaller: $(pyinstaller --version 2>/dev/null || echo 'n/a')" \
-              "目标架构: arm64 (Apple Silicon M1/M2/M3 原生)" \
-              "========================================================" \
-              "首次打开方法:" \
-              "  方式1: 双击 .app 直接打开（已移除隔离属性）" \
-              "  方式2: 若被阻止，请右键 .app → 打开 → 点击\"打开\"" \
-              "  方式3: 终端执行 xattr -dr com.apple.quarantine \"/path/to/${PROJECT_NAME}.app\"" \
-              "========================================================" \
-              "依赖说明:" \
-              "  所有 Python 依赖（duckdb/pandas/openpyxl/tkcalendar/tcl/tk）已打包进 .app" \
-              "  无需额外安装 Python 环境" \
-              "========================================================" \
-              > build_info.txt
-            cat build_info.txt
-
-      # 上传构建产物
-      # See: `https://circleci.com/docs/reference/configuration-reference/#store_artifacts`
+      # 6. 上传到 Artifacts，供你下载
       - store_artifacts:
-          path: dist
-          destination: macOS-arm64-app
+          path: app-macos-arm64.zip
+          destination: app-macos-arm64.zip
 
-      - store_artifacts:
-          path: build_info.txt
-          destination: macOS-arm64-build-info
-
-# Orchestrate jobs using workflows
-# See: `https://circleci.com/docs/guides/orchestrate/workflows/`
-#      & `https://circleci.com/docs/reference/configuration-reference/#workflows`
 workflows:
-  build-macos:
+  build:
     jobs:
       - build-macos-arm64

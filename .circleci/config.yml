@@ -1,34 +1,37 @@
+# Use the latest 2.1 version of CircleCI pipeline process engine.
+# See: `https://circleci.com/docs/reference/configuration-reference/`
+
 version: 2.1
 
-# ===== 触发参数（通过 API 或手动触发时传入） =====
+# Orbs are reusable packages of CircleCI configuration that you may share across
+# projects, enabling you to create encapsulated, parameterized commands, jobs,
+# and executors that can be used across multiple projects.
+# See: `https://circleci.com/docs/orbs/use/orb-intro/`
+orbs:
+  # See the Python orb documentation here: `https://circleci.com/developer/orbs/orb/circleci/python`
+  python: circleci/python@2.1.1
+
+# Pipeline parameters（通过 API 或手动触发时传入，等价于 GitHub Actions inputs）
+# See: `https://circleci.com/docs/reference/configuration-reference/#parameters`
 parameters:
   build_universal2:
     type: boolean
-    default: false       # 默认只构建 arm64，需要 universal2 时传入 true
+    default: false       # 默认只构建 arm64，传入 true 时同时构建 universal2
   python_version:
     type: enum
     enum: ["3.11", "3.12", "3.13"]
     default: "3.12"
 
-# ===== 复用：依赖安装步骤 =====
-commands:
-  install-deps:
-    description: "安装 Python 依赖（duckdb/pandas/openpyxl/tkcalendar/pyinstaller）"
-    steps:
-      - run:
-          name: 安装 Python 依赖
-          command: |
-            python3 -m pip install --upgrade pip setuptools wheel
-            pip3 install duckdb pandas openpyxl tkcalendar pyinstaller
-      - run:
-          name: 显示已安装依赖版本
-          command: |
-            pip3 list 2>/dev/null | grep -iE "duckdb|pandas|openpyxl|tkcalendar|pyinstaller" || true
-            pyinstaller --version || true
+# Define jobs to be invoked later in a workflow.
+# See: `https://circleci.com/docs/guides/orchestrate/jobs-steps/#jobs-overview`
+#      & `https://circleci.com/docs/reference/configuration-reference/#jobs`
+jobs:
 
-# ===== Executor：macOS Apple Silicon (M2) =====
-executors:
-  macos-arm64:
+  # ===== macOS arm64 构建（主产物，M1/M2/M3 原生） =====
+  build-macos-arm64:
+    # 使用 macOS Apple Silicon executor 构建 .app 应用包
+    # Docker executor (cimg/python) 是 Linux 环境，无法构建 macOS .app
+    # See: `https://circleci.com/docs/guides/execution-managed/executor-intro/`
     macos:
       xcode: "16.4.0"
     resource_class: m2.medium.gen1   # Apple Silicon M2，4 vCPU / 8GB
@@ -38,19 +41,16 @@ executors:
       PYTHONIOENCODING: utf-8
       PYTHONUTF8: "1"
 
-# ===== Jobs =====
-jobs:
-
-  # ----- macOS arm64 构建（主产物，M1/M2/M3 原生） -----
-  build-macos-arm64:
-    executor: macos-arm64
+    # Add steps to the job
+    # See: `https://circleci.com/docs/guides/orchestrate/jobs-steps/#steps-overview`
     steps:
+      # Checkout the code as the first step.
       - checkout
 
       - run:
-          name: 显示 Runner 信息
+          name: 显示 Runner 硬件信息
           command: |
-            echo "=== Runner 硬件信息 ==="
+            echo "=== 硬件信息 ==="
             echo "架构: $(uname -m)"
             echo "macOS: $(sw_vers -productVersion)"
             echo "Xcode: $(xcodebuild -version 2>/dev/null | head -1 || echo 'n/a')"
@@ -59,7 +59,17 @@ jobs:
             python3 --version
             echo "Python 路径: $(which python3)"
 
-      - install-deps
+      # 使用 Python orb 安装 requirements.txt 中的依赖
+      # See: `https://circleci.com/developer/orbs/orb/circleci/python`
+      - python/install-packages:
+          pkg-manager: pip
+
+      - run:
+          name: 验证依赖安装
+          command: |
+            pip3 list 2>/dev/null | grep -iE "duckdb|pandas|openpyxl|tkcalendar|pyinstaller" || true
+            echo ""
+            echo "PyInstaller 版本: $(pyinstaller --version)"
 
       - run:
           name: 运行 macOS 兼容性验证
@@ -126,6 +136,8 @@ jobs:
               > build_info.txt
             cat build_info.txt
 
+      # 上传构建产物
+      # See: `https://circleci.com/docs/reference/configuration-reference/#store_artifacts`
       - store_artifacts:
           path: dist
           destination: macOS-arm64-app
@@ -134,21 +146,31 @@ jobs:
           path: build_info.txt
           destination: macOS-arm64-build-info
 
+      # 持久化到 workspace，供 universal2 job 复用
       - persist_to_workspace:
           root: .
           paths:
             - dist
             - build_info.txt
 
-  # ----- macOS universal2 构建（arm64 + x86_64 通用，可选） -----
+  # ===== macOS universal2 构建（arm64 + x86_64 通用，可选） =====
   build-macos-universal2:
-    executor: macos-arm64
+    macos:
+      xcode: "16.4.0"
+    resource_class: m2.medium.gen1
+    environment:
+      PROJECT_NAME: 疾控中心下发报告生成工具
+      DIST_DIR: dist
+      PYTHONIOENCODING: utf-8
+      PYTHONUTF8: "1"
     steps:
       - checkout
+      # 复用 arm64 job 的 workspace（dist 目录等）
       - attach_workspace:
           at: .
 
-      - install-deps
+      - python/install-packages:
+          pkg-manager: pip
 
       - run:
           name: PyInstaller 构建（universal2 双架构）
@@ -206,7 +228,9 @@ jobs:
           path: build_info_universal2.txt
           destination: macOS-universal2-build-info
 
-# ===== Workflows =====
+# Orchestrate jobs using workflows
+# See: `https://circleci.com/docs/guides/orchestrate/workflows/`
+#      & `https://circleci.com/docs/reference/configuration-reference/#workflows`
 workflows:
   build-macos:
     jobs:

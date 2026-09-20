@@ -3,7 +3,7 @@ version: 2.1
 jobs:
   build-macos-arm64:
     macos:
-      xcode: "16.0"
+      xcode: "16.4.0"
     resource_class: m4pro.medium   # Apple Silicon (arm64) 资源类
     steps:
       - checkout

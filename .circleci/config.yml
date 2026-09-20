@@ -17,16 +17,28 @@ jobs:
       - run:
           name: Verify macOS ARM64 environment
           command: |
+            set -e
+            echo "=== 工作目录 ==="
+            pwd
+            ls -la
+            echo ""
+            echo "=== 系统信息 ==="
             sw_vers
-            uname -m
+            echo "架构: $(uname -m)"
+            echo ""
+            echo "=== Python 信息 ==="
             python3 --version
             python3 -c "import platform; print('machine:', platform.machine())"
+            echo "python3 路径: $(which python3)"
 
       # 2. 安装项目依赖 + PyInstaller
       - run:
           name: Install dependencies
           command: |
+            set -e
             python3 -m pip install --upgrade pip setuptools wheel
+            echo "=== 安装 requirements.txt ==="
+            cat requirements.txt
             python3 -m pip install -r requirements.txt
           environment:
             ARCHFLAGS: "-arch arm64"
@@ -35,14 +47,28 @@ jobs:
       - run:
           name: 验证依赖安装
           command: |
+            set -e
             pip3 list 2>/dev/null | grep -iE "duckdb|pandas|openpyxl|tkcalendar|pyinstaller" || true
             echo ""
             echo "PyInstaller: $(pyinstaller --version)"
+            echo "pyinstaller 路径: $(which pyinstaller)"
 
       # 3. 执行打包脚本
       - run:
           name: Build .app with build_exe.py
-          command: python3 build_exe.py
+          command: |
+            set -e
+            echo "=== 构建前检查关键文件 ==="
+            for f in report_generator.py report_generator.spec prov_report.db prov_generate_data.sql 疾控下发汇总报告模板.xlsx 版本日志.txt; do
+              if [ -f "$f" ]; then
+                echo "[OK] $f"
+              else
+                echo "[MISSING] $f"
+              fi
+            done
+            echo ""
+            echo "=== 执行 build_exe.py ==="
+            python3 build_exe.py
           environment:
             TARGET_ARCH: "arm64"
             ARCHFLAGS: "-arch arm64"
@@ -51,10 +77,15 @@ jobs:
       - run:
           name: Verify app architecture
           command: |
+            set -e
             APP="$DIST_DIR/${PROJECT_NAME}.app"
             BIN="$APP/Contents/MacOS/${PROJECT_NAME}"
+            echo "=== dist 目录内容 ==="
+            ls -la "$DIST_DIR/"
+            echo ""
             if [ ! -f "$BIN" ]; then
-              echo "❌ 未找到可执行文件，列出 Contents/MacOS："
+              echo "❌ 未找到可执行文件: $BIN"
+              echo "Contents/MacOS 目录:"
               ls -la "$APP/Contents/MacOS/" 2>/dev/null || true
               exit 1
             fi
@@ -74,12 +105,15 @@ jobs:
       - run:
           name: Package dist into zip
           command: |
+            set -e
             TS=$(date +"%Y%m%d_%H%M%S")
             VER=$(python3 -c "import re; c=open('report_generator.py',encoding='utf-8').read(); m=re.search(r'VERSION\s*=\s*\x22([^\x22]+)\x22', c); print(m.group(1) if m else 'Unknown')")
-            ZIP="${PROJECT_NAME}_${VER}_macOS_arm64_M4_${TS}.zip"
+            # 使用固定 ZIP 名，因为 store_artifacts 的 path 不支持运行时变量
+            ZIP="app-macos-arm64.zip"
             echo "应用版本: $VER"
             echo "ZIP 文件名: $ZIP"
 
+            # 生成构建说明并放进 dist（解压后和 .app 同目录）
             printf '%s\n' \
               "${PROJECT_NAME} macOS arm64 Build Info" \
               "========================================================" \
@@ -92,24 +126,29 @@ jobs:
               "========================================================" \
               "首次打开方法:" \
               "  方式1: 双击 .app 直接打开（已移除隔离属性）" \
-              "  方式2: 若被阻止，请右键 .app → 打开 → 点击\"打开\"" \
-              "  方式3: 终端执行 xattr -dr com.apple.quarantine \"/path/to/${PROJECT_NAME}.app\"" \
+              "  方式2: 若被阻止，请右键 .app -> 打开 -> 点击 打开" \
+              "  方式3: 终端执行 xattr -dr com.apple.quarantine /path/to/${PROJECT_NAME}.app" \
               "========================================================" \
               > "$DIST_DIR/build_info.txt"
             cat "$DIST_DIR/build_info.txt"
 
+            # 关键：-y 保留符号链接，否则 .app 结构会损坏
             cd "$DIST_DIR"
             zip -r -y "../$ZIP" . -x "*.pyc" "__pycache__/*"
             cd ..
+            echo ""
+            echo "=== ZIP 文件信息 ==="
+            ls -lh "$ZIP"
 
-            cp "$ZIP" app-macos-arm64.zip
-
-            echo "export ZIP_FILE=$ZIP" >> $BASH_ENV
-
-      # 6. 上传构建产物到 Artifacts（只上传 zip 一个文件）
+      # 6. 上传构建产物到 Artifacts
       - store_artifacts:
           path: app-macos-arm64.zip
           destination: app-macos-arm64.zip
+
+      # 额外：上传整个 dist 目录作为备用（方便排查）
+      - store_artifacts:
+          path: dist
+          destination: dist
 
 workflows:
   build:

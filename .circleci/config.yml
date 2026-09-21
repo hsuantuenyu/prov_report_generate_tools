@@ -13,9 +13,9 @@ jobs:
     steps:
       - checkout
 
-      # 1. 查看环境，确认是 arm64 而不是 Rosetta
+      # 1. 查看 Python 与 tkinter 可用性（关键诊断）
       - run:
-          name: Verify macOS ARM64 environment
+          name: Verify macOS ARM64 + Python tkinter
           command: |
             set -e
             echo "=== 工作目录 ==="
@@ -26,18 +26,46 @@ jobs:
             sw_vers
             echo "架构: $(uname -m)"
             echo ""
-            echo "=== Python 信息 ==="
-            python3 --version
-            python3 -c "import platform; print('machine:', platform.machine())"
-            echo "python3 路径: $(which python3)"
+            echo "=== 预装 Python 信息 ==="
+            /usr/bin/python3 --version
+            /usr/bin/python3 -c "import platform; print('machine:', platform.machine())"
+            echo "系统 Python tkinter 测试:"
+            /usr/bin/python3 -c "import tkinter; print('tkinter OK:', tkinter.TkVersion)" 2>&1 || echo "系统 Python 无 tkinter"
+            echo ""
+            echo "=== Homebrew Python 检查 ==="
+            brew --version 2>/dev/null || echo "brew 不可用"
 
-      # 2. 安装项目依赖 + PyInstaller
+      # 2. 用 Homebrew 安装带 Tcl/Tk 的 Python（系统 Python 缺少 tkinter）
+      - run:
+          name: Install Homebrew Python with Tcl/Tk
+          command: |
+            set -e
+            echo "=== 安装 Homebrew python@3.12 + python-tk@3.12 + tcl-tk ==="
+            brew install python@3.12 python-tk@3.12 tcl-tk
+            echo ""
+            echo "=== Homebrew Python 路径 ==="
+            ls -la /opt/homebrew/bin/python3.12 2>/dev/null || ls -la /usr/local/bin/python3.12 2>/dev/null || true
+            echo ""
+            # 让 Homebrew Python 优先于系统 Python
+            echo 'export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"' >> $BASH_ENV
+            # 刷新环境
+            export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+            echo "Python 版本:"
+            python3 --version
+            echo "Python 路径:"
+            which python3
+            echo ""
+            echo "=== tkinter 验证（关键）==="
+            python3 -c "import tkinter; print('tkinter OK, TkVersion:', tkinter.TkVersion)"
+            python3 -c "import tkinter; tkinter.Tk().eval('info patchlevel'); print('Tcl/Tk patchlevel:', tkinter.Tcl().eval('info patchlevel'))"
+
+      # 3. 安装项目依赖 + PyInstaller
       - run:
           name: Install dependencies
           command: |
             set -e
             python3 -m pip install --upgrade pip setuptools wheel
-            echo "=== 安装 requirements.txt ==="
+            echo "=== requirements.txt 内容 ==="
             cat requirements.txt
             python3 -m pip install -r requirements.txt
           environment:
@@ -53,7 +81,7 @@ jobs:
             echo "PyInstaller: $(pyinstaller --version)"
             echo "pyinstaller 路径: $(which pyinstaller)"
 
-      # 3. 执行打包脚本
+      # 4. 执行打包脚本
       - run:
           name: Build .app with build_exe.py
           command: |
@@ -73,9 +101,9 @@ jobs:
             TARGET_ARCH: "arm64"
             ARCHFLAGS: "-arch arm64"
 
-      # 4. 校验产物架构
+      # 5. 校验产物架构 + tkinter 是否打包进去
       - run:
-          name: Verify app architecture
+          name: Verify app architecture + tkinter
           command: |
             set -e
             APP="$DIST_DIR/${PROJECT_NAME}.app"
@@ -85,7 +113,6 @@ jobs:
             echo ""
             if [ ! -f "$BIN" ]; then
               echo "❌ 未找到可执行文件: $BIN"
-              echo "Contents/MacOS 目录:"
               ls -la "$APP/Contents/MacOS/" 2>/dev/null || true
               exit 1
             fi
@@ -99,21 +126,25 @@ jobs:
               echo "❌ 架构不符：期望 arm64"
               exit 1
             fi
+            # 验证 .app 内是否包含 tkinter 相关文件
+            echo ""
+            echo "=== 验证 .app 内 tkinter 是否打包成功 ==="
+            find "$APP" -name "*tkinter*" 2>/dev/null | head -20
+            find "$APP" -name "_tkinter*" 2>/dev/null | head -5
+            find "$APP" -name "libtcl*" -o -name "libtk*" 2>/dev/null | head -5
             xattr -dr com.apple.quarantine "$APP" 2>/dev/null || true
 
-      # 5. 生成构建说明 + 打包 ZIP
+      # 6. 生成构建说明 + 打包 ZIP
       - run:
           name: Package dist into zip
           command: |
             set -e
             TS=$(date +"%Y%m%d_%H%M%S")
             VER=$(python3 -c "import re; c=open('report_generator.py',encoding='utf-8').read(); m=re.search(r'VERSION\s*=\s*\x22([^\x22]+)\x22', c); print(m.group(1) if m else 'Unknown')")
-            # 使用固定 ZIP 名，因为 store_artifacts 的 path 不支持运行时变量
             ZIP="app-macos-arm64.zip"
             echo "应用版本: $VER"
             echo "ZIP 文件名: $ZIP"
 
-            # 生成构建说明并放进 dist（解压后和 .app 同目录）
             printf '%s\n' \
               "${PROJECT_NAME} macOS arm64 Build Info" \
               "========================================================" \
@@ -140,12 +171,12 @@ jobs:
             echo "=== ZIP 文件信息 ==="
             ls -lh "$ZIP"
 
-      # 6. 上传构建产物到 Artifacts
+      # 7. 上传构建产物到 Artifacts
       - store_artifacts:
           path: app-macos-arm64.zip
           destination: app-macos-arm64.zip
 
-      # 额外：上传整个 dist 目录作为备用（方便排查）
+      # 额外：上传整个 dist 目录作为备用
       - store_artifacts:
           path: dist
           destination: dist

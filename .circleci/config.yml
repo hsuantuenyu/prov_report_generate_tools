@@ -13,9 +13,9 @@ jobs:
     steps:
       - checkout
 
-      # 1. 查看 Python 与 tkinter 可用性（关键诊断）
+      # 1. 查看 Python 与 tkinter 可用性
       - run:
-          name: Verify macOS ARM64 + Python tkinter
+          name: Verify macOS ARM64 + Python environment
           command: |
             set -e
             echo "=== 工作目录 ==="
@@ -26,16 +26,18 @@ jobs:
             sw_vers
             echo "架构: $(uname -m)"
             echo ""
-            echo "=== 预装 Python 信息 ==="
-            /usr/bin/python3 --version
-            /usr/bin/python3 -c "import platform; print('machine:', platform.machine())"
-            echo "系统 Python tkinter 测试:"
-            /usr/bin/python3 -c "import tkinter; print('tkinter OK:', tkinter.TkVersion)" 2>&1 || echo "系统 Python 无 tkinter"
+            echo "=== 预装 Python（pyenv shim）信息 ==="
+            python3 --version
+            which python3
+            echo "预装 Python tkinter 测试:"
+            python3 -c "import tkinter; print('tkinter OK:', tkinter.TkVersion)" 2>&1 || echo "预装 Python 无 tkinter (pyenv 编译时未启用 tcl/tk)"
             echo ""
-            echo "=== Homebrew Python 检查 ==="
+            echo "=== Homebrew 检查 ==="
             brew --version 2>/dev/null || echo "brew 不可用"
 
-      # 2. 用 Homebrew 安装带 Tcl/Tk 的 Python（系统 Python 缺少 tkinter）
+      # 2. 用 Homebrew 安装带 Tcl/Tk 的 Python
+      # 根因：CircleCI macOS 镜像用 pyenv 编译的 Python，未启用 --with-tcltk，
+      # 导致 _tkinter C 扩展缺失。必须改用 Homebrew 的 python@3.12（带 python-tk）。
       - run:
           name: Install Homebrew Python with Tcl/Tk
           command: |
@@ -46,20 +48,56 @@ jobs:
             echo "=== Homebrew Python 路径 ==="
             ls -la /opt/homebrew/bin/python3.12 2>/dev/null || ls -la /usr/local/bin/python3.12 2>/dev/null || true
             echo ""
-            # 让 Homebrew Python 优先于系统 Python
+            # 关键：把 Homebrew 路径放在 PATH 最前面，绕开 pyenv shim
             echo 'export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"' >> $BASH_ENV
-            # 刷新环境
+            # 当前 shell 也立即生效
             export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
-            echo "Python 版本:"
-            python3 --version
-            echo "Python 路径:"
-            which python3
+            # 取消 pyenv shim 干扰
+            echo 'export PYENV_ROOT=""' >> $BASH_ENV
+            export PYENV_ROOT=""
+            echo "Homebrew Python 版本:"
+            /opt/homebrew/bin/python3.12 --version || /usr/local/bin/python3.12 --version
             echo ""
-            echo "=== tkinter 验证（关键）==="
-            python3 -c "import tkinter; print('tkinter OK, TkVersion:', tkinter.TkVersion)"
-            python3 -c "import tkinter; tkinter.Tk().eval('info patchlevel'); print('Tcl/Tk patchlevel:', tkinter.Tcl().eval('info patchlevel'))"
+            echo "=== tkinter 验证（关键，失败立即停止）==="
+            /opt/homebrew/bin/python3.12 -c "import tkinter; print('tkinter OK, TkVersion:', tkinter.TkVersion)" 2>&1 || /usr/local/bin/python3.12 -c "import tkinter; print('tkinter OK, TkVersion:', tkinter.TkVersion)"
+            /opt/homebrew/bin/python3.12 -c "import tkinter; print('Tcl/Tk patchlevel:', tkinter.Tcl().eval('info patchlevel'))" 2>&1 || /usr/local/bin/python3.12 -c "import tkinter; print('Tcl/Tk patchlevel:', tkinter.Tcl().eval('info patchlevel'))"
 
-      # 3. 安装项目依赖 + PyInstaller
+      # 3. 创建 python3 软链接指向 Homebrew Python（让 build_exe.py 调用 python3 时也走 Homebrew）
+      - run:
+          name: Setup python3 symlink to Homebrew Python
+          command: |
+            set -e
+            # 找到 Homebrew python3.12 的实际路径
+            HB_PYTHON=""
+            if [ -x /opt/homebrew/bin/python3.12 ]; then
+              HB_PYTHON=/opt/homebrew/bin/python3.12
+            elif [ -x /usr/local/bin/python3.12 ]; then
+              HB_PYTHON=/usr/local/bin/python3.12
+            else
+              echo "❌ 找不到 Homebrew python3.12"
+              exit 1
+            fi
+            echo "Homebrew Python: $HB_PYTHON"
+            # 创建 python3 / pip3 / pyinstaller 软链接到 /usr/local/bin（PATH 中优先于 pyenv shim）
+            mkdir -p /usr/local/bin
+            ln -sf "$HB_PYTHON" /usr/local/bin/python3
+            ln -sf "$HB_PYTHON" /usr/local/bin/python
+            # pip 软链接
+            PIP_BIN=$(dirname "$HB_PYTHON")/pip3.12
+            if [ -x "$PIP_BIN" ]; then
+              ln -sf "$PIP_BIN" /usr/local/bin/pip3
+              ln -sf "$PIP_BIN" /usr/local/bin/pip
+            fi
+            # 确保 /usr/local/bin 在 PATH 最前
+            echo 'export PATH="/usr/local/bin:/opt/homebrew/bin:$PATH"' >> $BASH_ENV
+            export PATH="/usr/local/bin:/opt/homebrew/bin:$PATH"
+            echo ""
+            echo "=== 验证 python3 现在指向 Homebrew ==="
+            which python3
+            python3 --version
+            python3 -c "import tkinter; print('python3 tkinter OK, TkVersion:', tkinter.TkVersion)"
+
+      # 4. 安装项目依赖 + PyInstaller（用 Homebrew Python）
       - run:
           name: Install dependencies
           command: |
@@ -81,7 +119,7 @@ jobs:
             echo "PyInstaller: $(pyinstaller --version)"
             echo "pyinstaller 路径: $(which pyinstaller)"
 
-      # 4. 执行打包脚本
+      # 5. 执行打包脚本
       - run:
           name: Build .app with build_exe.py
           command: |
@@ -95,13 +133,16 @@ jobs:
               fi
             done
             echo ""
+            echo "=== 构建使用的 Python ==="
+            python3 -c "import sys; print('Python:', sys.executable); print('Version:', sys.version)"
+            echo ""
             echo "=== 执行 build_exe.py ==="
             python3 build_exe.py
           environment:
             TARGET_ARCH: "arm64"
             ARCHFLAGS: "-arch arm64"
 
-      # 5. 校验产物架构 + tkinter 是否打包进去
+      # 6. 校验产物架构 + tkinter 是否打包进去
       - run:
           name: Verify app architecture + tkinter
           command: |
@@ -134,7 +175,7 @@ jobs:
             find "$APP" -name "libtcl*" -o -name "libtk*" 2>/dev/null | head -5
             xattr -dr com.apple.quarantine "$APP" 2>/dev/null || true
 
-      # 6. 生成构建说明 + 打包 ZIP
+      # 7. 生成构建说明 + 打包 ZIP
       - run:
           name: Package dist into zip
           command: |
@@ -171,7 +212,7 @@ jobs:
             echo "=== ZIP 文件信息 ==="
             ls -lh "$ZIP"
 
-      # 7. 上传构建产物到 Artifacts
+      # 8. 上传构建产物到 Artifacts
       - store_artifacts:
           path: app-macos-arm64.zip
           destination: app-macos-arm64.zip

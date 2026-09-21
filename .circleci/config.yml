@@ -52,9 +52,7 @@ jobs:
             echo 'export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"' >> $BASH_ENV
             # 当前 shell 也立即生效
             export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
-            # 取消 pyenv shim 干扰
-            echo 'export PYENV_ROOT=""' >> $BASH_ENV
-            export PYENV_ROOT=""
+            # 注意：不要设置 PYENV_ROOT="" —— pyenv 会尝试在根目录创建 /shims /versions，触发只读错误
             echo "Homebrew Python 版本:"
             /opt/homebrew/bin/python3.12 --version || /usr/local/bin/python3.12 --version
             echo ""
@@ -102,10 +100,11 @@ jobs:
           name: Install dependencies
           command: |
             set -e
-            python3 -m pip install --upgrade pip setuptools wheel
+            # Homebrew Python 是 externally-managed（PEP 668），CI 隔离环境直接加 --break-system-packages
+            python3 -m pip install --break-system-packages --upgrade pip setuptools wheel
             echo "=== requirements.txt 内容 ==="
             cat requirements.txt
-            python3 -m pip install -r requirements.txt
+            python3 -m pip install --break-system-packages -r requirements.txt
           environment:
             ARCHFLAGS: "-arch arm64"
             PIP_USE_PEP517: "1"

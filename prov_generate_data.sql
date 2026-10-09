@@ -228,7 +228,7 @@ select a.city,
        sum(j.notnull_records) j_notnull_records,
        sum(k.total_records) k_total_records,
        sum(k.notnull_records) k_notnull_records,
-       sum(case when m.association_rate >=100 then 1 else 0 end) association_org_cnt
+       sum(case when m.association_rate >=90 then 1 else 0 end) association_org_cnt
 from org_list a
  left join prov_timeliness_org b on b.org_code = a.org_code and b.table_level = '1'
          left join prov_timeliness_org c on c.org_code = a.org_code and c.table_level = '2'

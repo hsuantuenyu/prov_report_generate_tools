@@ -15,8 +15,8 @@ from tkcalendar import Calendar
 warnings.filterwarnings('ignore', message='pandas only supports SQLAlchemy')
 
 
-VERSION = "V1.10"
-BUILD_DATE = "2026-08-11"
+VERSION = "V1.11"
+BUILD_DATE = "2026-09-20"
 
 
 # ===== 跨平台路径解析 =====

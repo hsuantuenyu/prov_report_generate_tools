@@ -39,7 +39,9 @@ DIRS_TO_COPY = [
 FILES_TO_COPY = [
     "prov_report.db",
     "prov_generate_data.sql",
+    "emergency_warning.sql",
     "疾控下发汇总报告模板.xlsx",
+    "应急处下发汇总报告模板.xlsx",
     "版本日志.txt"
 ]
 

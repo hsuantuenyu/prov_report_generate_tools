@@ -3,7 +3,6 @@ from tkinter import ttk, filedialog, messagebox
 import duckdb
 import pandas as pd
 import os
-import re
 import sys
 import shutil
 import threading
@@ -16,51 +15,8 @@ from tkcalendar import Calendar
 warnings.filterwarnings('ignore', message='pandas only supports SQLAlchemy')
 
 
-VERSION = "V1.12"
-BUILD_DATE = "2026-10-12"
-
-# 业务处室配置
-DEPT_CONFIG = {
-    "early_warning": {
-        "name": "预警处",
-        "table_flag": "early_warning",
-        "template": "疾控下发汇总报告模板.xlsx",
-        "has_national_flag": True,  # 只有预警处有省标/国标区分
-        "sql_file": "prov_generate_data.sql",
-        "export_sheets": [
-            '地市(州)', '机构汇总', '时效性明细', '必填字段完整性',
-            '重要建议填字段完整性', '条件必填字段完整性',
-            '第二批次更新字段明细', '关联关系明细',
-            '业务主键唯一率', '主诉明细', '现病史明细'
-        ]
-    },
-    "emergency_warning": {
-        "name": "应急处",
-        "table_flag": "emergency_warning",
-        "template": "应急处下发汇总报告_模板.xlsx",
-        "has_national_flag": False,
-        "sql_file": "emergency_warning.sql",
-        "export_sheets": [
-            '地市(州)', '机构汇总', '时效性明细', '必填字段完整性',
-            '重要建议填字段完整性', '条件必填字段完整性',
-            '第二批次更新字段明细', '关联关系明细',
-            '主诉明细', '现病史明细'
-        ]
-    },
-    "medicine_regulatory": {
-        "name": "药政处",
-        "table_flag": "medicine_regulatory",
-        "template": "药政处下发汇总报告_模板.xlsx",
-        "has_national_flag": False,
-        "sql_file": "medicine_regulatory.sql",
-        "export_sheets": [
-            '地市(州)', '机构汇总', '时效性明细', '必填字段完整性',
-            '重要建议填字段完整性', '条件必填字段完整性',
-            '第二批次更新字段明细', '关联关系明细',
-            '主诉明细', '现病史明细'
-        ]
-    }
-}
+VERSION = "V1.11"
+BUILD_DATE = "2026-09-20"
 
 
 # ===== 跨平台路径解析 =====
@@ -235,7 +191,7 @@ class ReportGeneratorTool:
         else:
             # Windows：固定 700x700
             window_width = 700
-            window_height = 760
+            window_height = 700
 
         # 启动时居中
         x = (screen_width - window_width) // 2
@@ -286,7 +242,7 @@ class ReportGeneratorTool:
         # 数据库需要写入权限 → 三级回退策略定位可写路径
         self.db_path = get_writable_db_path("prov_report.db")
         # 只读资源 → 从 _RESOURCE_DIR（PyInstaller 包内或脚本目录）读取
-        # self.sql_file_path = resolve_resource("prov_generate_data.sql")
+        self.sql_file_path = resolve_resource("prov_generate_data.sql")
         self.version_log_path = resolve_resource("版本日志.txt")
         self.default_template_path = resolve_resource("疾控下发汇总报告模板.xlsx")
 
@@ -297,96 +253,26 @@ class ReportGeneratorTool:
         self.start_date.set("")  # 初始化为空
         self.end_date = tk.StringVar()
         self.end_date.set("")  # 初始化为空
-        self.dept_var = tk.StringVar(value="early_warning")  # 默认预警处
         self.national_flag_var = tk.StringVar(value="national")  # 默认国标
         self.date_range_mode = tk.StringVar(value="single")  # 默认单日
         self.data_imported = False  # 是否已导入数据
-        self._is_dept_changing = False  # 标志：是否正在切换处室（避免重复弹窗）
 
         # 绑定切换类别时的检查回调
         self.national_flag_var.trace_add('write', self.on_flag_change)
 
         self.create_main_interface()
 
-    def get_dept_key(self, dept_name=None):
-        """根据业务处室名称获取配置key，或根据当前选择获取"""
-        if dept_name is None:
-            dept_name = self.dept_var.get()
-        # 名称到key的映射
-        name_to_key = {v["name"]: k for k, v in DEPT_CONFIG.items()}
-        return name_to_key.get(dept_name, "early_warning")
-        
-    def get_current_dept_config(self):
-        """获取当前业务处室的配置"""
-        dept_key = self.get_dept_key()
-        return DEPT_CONFIG.get(dept_key, DEPT_CONFIG["early_warning"])
-        
-    
-    def get_sql_file_path(self):
-        """根据当前业务处室获取对应的 SQL 文件路径"""
-        dept_config = self.get_current_dept_config()
-        sql_file = dept_config.get("sql_file", "prov_generate_data.sql")
-        return resolve_resource(sql_file)
-    
-    def on_dept_change(self, event=None):
-        """切换业务处室时的回调"""
-        self._is_dept_changing = True
-        try:
-            dept_config = self.get_current_dept_config()
-            
-            # 控制国标/全部选择框的显示/隐藏
-            if hasattr(self, 'flag_frame'):
-                if dept_config["has_national_flag"]:
-                    self.flag_frame.grid()
-                    # 预警处默认使用国标
-                    self.national_flag_var.set("national")
-                else:
-                    self.flag_frame.grid_remove()
-                    # 非预警处自动切换到"全部"模式（即省标表）
-                    if self.national_flag_var.get() != "all":
-                        self.national_flag_var.set("all")
-            
-            # 更新模板文件
-            self.update_template_by_dept()
-            
-            # 更新导出文件名
-            if hasattr(self, 'export_name_var'):
-                self.update_export_filename()
-            
+    def on_flag_change(self, *args):
+        """切换质控报告生成类别时的回调：已导入数据则强制切换到数据加工并提示"""
+        if self.data_imported:
+            flag_name = "全部" if self.national_flag_var.get() == "all" else "国标"
             # 强制切换到"3. 数据加工"选项卡（索引为2）
             if hasattr(self, 'notebook'):
                 self.notebook.select(2)
-        finally:
-            self._is_dept_changing = False
-
-    def update_template_by_dept(self):
-        """根据当前业务处室更新模板文件"""
-        dept_config = self.get_current_dept_config()
-        template_name = dept_config["template"]
-        
-        if template_name:
-            template_path = resolve_resource(template_name)
-            if os.path.exists(template_path):
-                self.template_path = template_path
-                if hasattr(self, 'template_label'):
-                    self.template_label.config(text=f"模板文件：{template_name}（{dept_config['name']}）")
-            else:
-                # 模板文件不存在，使用默认模板
-                self.template_path = self.default_template_path
-                if hasattr(self, 'template_label'):
-                    self.template_label.config(text=f"模板文件：疾控下发汇总报告模板.xlsx（默认）")
-        else:
-            # 没有配置模板，使用默认模板
-            self.template_path = self.default_template_path
-            if hasattr(self, 'template_label'):
-                self.template_label.config(text=f"模板文件：疾控下发汇总报告模板.xlsx（默认）")
-        
-            
-    def on_flag_change(self, *args):
-        """切换质控报告生成类别时的回调"""
-        # 强制切换到"3. 数据加工"选项卡（索引为2）
-        if hasattr(self, 'notebook'):
-            self.notebook.select(2)
+            messagebox.showwarning(
+                "提示",
+                f"已切换为【{flag_name}】，需要重新执行数据加工操作。\n\n请点击【执行数据加工SQL】按钮。"
+            )
 
     def on_date_range_change(self, *args):
         """切换日期区间模式时的回调：控制结束日期的显示/隐藏"""
@@ -473,42 +359,24 @@ class ReportGeneratorTool:
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
 
-        # 业务处室选择框
-        dept_frame = ttk.Frame(main_frame)
-        dept_frame.grid(row=0, column=0, sticky=tk.W, pady=(0, 2 if sys.platform == 'darwin' else 5))
+        # 国标/全部选择框
+        flag_frame = ttk.Frame(main_frame)
+        flag_frame.grid(row=0, column=0, sticky=tk.W, pady=(0, 2 if sys.platform == 'darwin' else 5))
 
-        dept_label = ttk.Label(dept_frame, text="业务处室：", font=('微软雅黑', 10, 'bold'))
-        dept_label.pack(side=tk.LEFT, padx=5)
-
-        dept_combobox = ttk.Combobox(dept_frame, textvariable=self.dept_var, state="readonly", width=10)
-        dept_combobox['values'] = (
-            "预警处",
-            "应急处", 
-            # "药政处"
-        )
-        dept_combobox.current(0)
-        dept_combobox.pack(side=tk.LEFT, padx=5)
-        # 绑定选择变化事件
-        dept_combobox.bind("<<ComboboxSelected>>", self.on_dept_change)
-
-        # 国标/全部选择框（只有预警处才显示）
-        self.flag_frame = ttk.Frame(main_frame)
-        self.flag_frame.grid(row=1, column=0, sticky=tk.W, pady=(0, 2 if sys.platform == 'darwin' else 5))
-
-        flag_label = ttk.Label(self.flag_frame, text="质控报告生成类别：", font=('微软雅黑', 10, 'bold'))
+        flag_label = ttk.Label(flag_frame, text="质控报告生成类别：", font=('微软雅黑', 10, 'bold'))
         flag_label.pack(side=tk.LEFT, padx=5)
 
-        self.national_radio = ttk.Radiobutton(self.flag_frame, text="国标", variable=self.national_flag_var, value="national")
-        self.national_radio.pack(side=tk.LEFT, padx=5)
+        national_radio = ttk.Radiobutton(flag_frame, text="国标", variable=self.national_flag_var, value="national")
+        national_radio.pack(side=tk.LEFT, padx=5)
 
-        self.all_radio = ttk.Radiobutton(self.flag_frame, text="全部", variable=self.national_flag_var, value="all")
-        self.all_radio.pack(side=tk.LEFT, padx=5)
+        all_radio = ttk.Radiobutton(flag_frame, text="全部", variable=self.national_flag_var, value="all")
+        all_radio.pack(side=tk.LEFT, padx=5)
 
         # Notebook 样式：macOS 上使用较小内边距
         self.notebook = ttk.Notebook(main_frame)
-        self.notebook.grid(row=2, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        self.notebook.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         main_frame.columnconfigure(0, weight=1)
-        main_frame.rowconfigure(2, weight=1)
+        main_frame.rowconfigure(1, weight=1)
 
         # macOS 上 Tab Frame 用统一的对称 padding: (左,上,右,下)
         if sys.platform == 'darwin':
@@ -757,26 +625,11 @@ class ReportGeneratorTool:
         top.wait_window()
     
     def get_base_name(self):
-        """根据业务处室和国标/全部选择返回对应的基础文件名"""
-        dept_config = self.get_current_dept_config()
-        dept_name = dept_config["name"]
-        dept_key = self.get_dept_key()
-        
-        if dept_key == "early_warning":
-            # 预警处：有省标/国标区分
-            flag = getattr(self, 'national_flag_var', None)
-            if flag and flag.get() == "all":
-                return "疾控下发汇总报告(省标表)_质控日期："
-            else:
-                return "疾控下发汇总报告(省标对照国标)_质控日期："
-        elif dept_key == "emergency_warning":
-            # 应急处：只有省标表
-            return "应急处下发汇总报告(省标表)_质控日期："
-        elif dept_key == "medicine_regulatory":
-            # 药政处：只有省标表
-            return "药政处下发汇总报告(省标表)_质控日期："
+        """根据国标/全部选择返回对应的基础文件名"""
+        flag = getattr(self, 'national_flag_var', None)
+        if flag and flag.get() == "all":
+            return "疾控下发汇总报告(省标表41张表)_质控日期："
         else:
-            # 默认
             return "疾控下发汇总报告(省标对照国标)_质控日期："
 
     def update_export_filename(self):
@@ -930,86 +783,21 @@ class ReportGeneratorTool:
                 self.process_status_label.config(text="加工状态：执行中...", foreground="orange")
                 self.process_text.delete(1.0, tk.END)
 
-                # 根据当前业务处室读取对应的 SQL 文件
-                sql_file = self.get_sql_file_path()
+                # 从 prov_generate_data.sql 文件读取 SQL（使用绝对路径）
+                sql_file = self.sql_file_path
                 if not os.path.exists(sql_file):
                     raise Exception(f"找不到 SQL 文件：{sql_file}")
 
                 with open(sql_file, 'r', encoding='utf-8') as f:
                     sql_content = f.read()
 
-                # 获取当前业务处室配置
-                dept_config = self.get_current_dept_config()
-                dept_flag = dept_config["table_flag"]
-                dept_name = dept_config["name"]
-                
-                self.process_text.insert(tk.END, f"当前业务处室：{dept_name}\n")
-                # self.process_text.insert(tk.END, f"过滤字段：{dept_flag} = '1'\n\n")
-
                 # 根据选择动态修改SQL
-                # 1. 添加业务处室过滤条件（在所有 prov_table_list 的引用上添加）
-                #    替换 b.national_flag = '1' → b.national_flag = '1' and b.dept_flag = '1'
-                sql_content = sql_content.replace(
-                    "and b.national_flag = '1'",
-                    f"and b.national_flag = '1' and b.{dept_flag} = '1'"
-                )
-                sql_content = sql_content.replace(
-                    "and b.national_flag='1'",
-                    f"and b.national_flag='1' and b.{dept_flag}='1'"
-                )
-                sql_content = sql_content.replace(
-                    "and c.national_flag = '1'",
-                    f"and c.national_flag = '1' and c.{dept_flag} = '1'"
-                )
-                sql_content = sql_content.replace(
-                    "and c.national_flag='1'",
-                    f"and c.national_flag='1' and c.{dept_flag}='1'"
-                )
-                
-                # 2. 对于没有 national_flag 但有 prov_table_list 的查询（如业务主键唯一率），
-                #    需要在 where a.table_name = b.table_name 后添加业务处室过滤
-                #    匹配模式：where a.table_name = b.table_name\n （后面没有其他条件直接跟 group by）
-                #    这种情况出现在 prov_business_org 的插入语句中
-                sql_content = sql_content.replace(
-                    "where a.table_name = b.table_name\ngroup by",
-                    f"where a.table_name = b.table_name and b.{dept_flag} = '1'\ngroup by"
-                )
-
-                # 2b. 对于明细表（如 prov_column_level_detail）带有 national_flag 的查询，
-                #     模式：where {detail_alias}.table_name = {prov_alias}.table_name and {detail_alias}.national_flag = '1'
-                #     需要根据处室和国标/全部模式做不同处理：
-                #       - 预警处+国标：保留 national_flag，不加 dept_flag
-                #       - 预警处+全部：移除 national_flag，不加 dept_flag
-                #       - 应急处/药政处：移除 national_flag，加 dept_flag
-                dept_key = self.get_dept_key()
-
-                def replace_detail_national_flag(match):
-                    detail_alias = match.group(1)
-                    prov_alias = match.group(2)
-                    if dept_key == "early_warning":
-                        if self.national_flag_var.get() == "all":
-                            # 预警处 + 全部：移除 national_flag，不加 dept_flag
-                            return f"where {detail_alias}.table_name = {prov_alias}.table_name"
-                        else:
-                            # 预警处 + 国标：保留 national_flag，不加 dept_flag
-                            return match.group(0)
-                    else:
-                        # 应急处/药政处：移除 national_flag，加 dept_flag
-                        return f"where {detail_alias}.table_name = {prov_alias}.table_name and {prov_alias}.{dept_flag} = '1'"
-
-                pattern = r"where\s+(\w+)\.table_name\s*=\s*(\w+)\.table_name\s+and\s+\1\.national_flag\s*=\s*'1'"
-                sql_content = re.sub(pattern, replace_detail_national_flag, sql_content)
-
-                # 3. 根据国标/全部选择处理 national_flag 条件
                 if self.national_flag_var.get() == "all":
                     # 选择"全部"时，移除所有 national_flag='1' 的条件
                     sql_content = sql_content.replace("and a.national_flag = '1'", "")
                     sql_content = sql_content.replace("and c.national_flag = '1'", "")
                     sql_content = sql_content.replace("and b.national_flag = '1'", "")
                     sql_content = sql_content.replace("and c.national_flag='1'", "")
-                    sql_content = sql_content.replace("and b.national_flag='1'", "")
-                    # 同时也要移除 a.national_flag='1' 的情况（明细表中的字段）
-                    sql_content = sql_content.replace("and a.national_flag='1'", "")
 
                 self.process_text.insert(tk.END, f"执行 SQL 脚本：{sql_file}\n\n")
                 
@@ -1109,9 +897,6 @@ in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realt
         
         select_template_btn = ttk.Button(template_frame, text="选择模板文件", command=self.select_template)
         select_template_btn.grid(row=0, column=1, padx=5)
-        
-        # 初始化时根据业务处室自动选择模板
-        self.update_template_by_dept()
         
         # 导出设置区域
         export_frame = ttk.LabelFrame(frame, text="导出设置", padding=inner_pad)
@@ -1762,26 +1547,20 @@ in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realt
                 self.log_message("连接数据库...\n")
                 conn = duckdb.connect(self.db_path)
                 
-                # Sheet 名称到 SQL 方法的映射
-                sheet_method_map = {
-                    '地市(州)': self.get_city_state_sql,
-                    '机构汇总': self.get_org_summary_sql,
-                    '时效性明细': self.get_realtime_detail_sql,
-                    '必填字段完整性': self.get_column_level1_sql,
-                    '重要建议填字段完整性': self.get_column_level2_sql,
-                    '条件必填字段完整性': self.get_column_level3_sql,
-                    '第二批次更新字段明细': self.get_column_version_2_sql,
-                    '关联关系明细': self.get_association_sql,
-                    '业务主键唯一率': self.get_business_sql,
-                    '主诉明细': self.get_chief_sql,
-                    '现病史明细': self.get_present_sql
+                export_sheets = {
+                    '地市(州)': self.get_city_state_sql(),
+                    '机构汇总': self.get_org_summary_sql(),
+                    '时效性明细': self.get_realtime_detail_sql(),
+                    '必填字段完整性': self.get_column_level1_sql(),
+                    '重要建议填字段完整性': self.get_column_level2_sql(),
+                    '条件必填字段完整性': self.get_column_level3_sql(),
+                    '第二批次更新字段明细':self.get_column_version_2_sql(),
+                    '关联关系明细': self.get_association_sql(),
+                    # '值域一致性': self.get_dict_sql(),
+                    '业务主键唯一率': self.get_business_sql(),
+                    '主诉明细': self.get_chief_sql(),
+                    '现病史明细': self.get_present_sql()
                 }
-                
-                # 根据当前处室获取需要导出的 Sheet 列表
-                dept_config = self.get_current_dept_config()
-                export_sheet_names = dept_config.get("export_sheets", list(sheet_method_map.keys()))
-                export_sheets = {name: sheet_method_map[name]() for name in export_sheet_names if name in sheet_method_map}
-                
                 
                 total_sheets = len(export_sheets)
                 processed = 0
@@ -2065,300 +1844,178 @@ in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realt
         dialog.wait_window()
 
     def get_national_condition(self):
-        """获取national_flag和业务处室过滤条件"""
-        dept_config = self.get_current_dept_config()
-        dept_flag = dept_config["table_flag"]
-        
-        condition = f"and c.{dept_flag}='1'"
-        
+        """获取national_flag条件"""
         if self.national_flag_var.get() == "national":
-            condition += " and c.national_flag='1'"
-        
-        return condition
-        
-	
+            return "and c.national_flag='1'"
+        return ""
             
-    # 获取地市州汇总 SQL
     def get_city_state_sql(self):
-        """地市州汇总 SQL 分发方法"""
-        dept_key = self.get_dept_key()
-        if dept_key == "early_warning": # 预警处
-            return self.get_early_warning_city_state_sql()
-        elif dept_key == "emergency_warning": # 应急处
-            return self.get_emergency_warning_city_state_sql()
-        else: # 药政处  
-            return self.get_medicine_regulatory_city_state_sql()
-
-    def get_early_warning_city_state_sql(self):
-        """预警处地市汇总 SQL"""
-        return f"""
-        select city,
-           org_cnt,
-           real_cnt,
-           concat(round((real_cnt / org_cnt) * 100, 2), '%') as real_rate,
-           hour_cnt,
-           concat(round((hour_cnt / org_cnt) * 100, 2), '%') as hour_rate,
-           other_cnt,
-           concat(round((other_cnt / org_cnt) * 100, 2), '%') as other_rate,
-           e_total_records,
-           e_notnull_records,
-           case when e_total_records >0 then
-           concat(round((e_notnull_records / e_total_records) * 100, 2), '%') end as e_notnull_rate,
-           f_total_records,
-           f_notnull_records,
-           case when f_total_records >0 then
-           concat(round((f_notnull_records / f_total_records) * 100, 2), '%') end as f_notnull_rate,
-           g_total_records,
-           g_notnull_records,
-           case when g_total_records >0 then
-           concat(round((g_notnull_records / g_total_records) * 100, 2), '%') end as g_notnull_rate,
-           h_total_records,
-           h_notnull_records,
-           case when h_total_records >0 then
-           concat(round((h_notnull_records / h_total_records) * 100, 2), '%') end as h_notnull_rate,
-           i_total_records,
-           i_notnull_records,
-           case when i_total_records >0 then
-           concat(round((i_notnull_records / i_total_records) * 100, 2), '%') end as i_notnull_rate,
-           j_total_records,
-           j_notnull_records,
-           case when j_total_records >0 then
-           concat(round((j_notnull_records / j_total_records) * 100, 2), '%') end as j_notnull_rate,
-           k_total_records,
-           k_notnull_records,
-           case when k_total_records >0 then
-           concat(round((k_notnull_records / k_total_records) * 100, 2), '%') end as k_notnull_rate,
-           association_org_cnt,
-           concat(round((association_org_cnt / org_cnt) * 100, 2), '%') as association__rate
-        from prov_city_summary a
-        union
-        select 'Total',
-           sum(org_cnt),
-           sum(real_cnt),
-           concat(round((sum(real_cnt) / sum(org_cnt)) * 100, 2), '%') as real_rate,
-           sum(hour_cnt),
-           concat(round((sum(hour_cnt) / sum(org_cnt)) * 100, 2), '%') as hour_rate,
-           sum(other_cnt),
-           concat(round((sum(other_cnt) / sum(org_cnt)) * 100, 2), '%') as other_rate,
-           sum(e_total_records),
-           sum(e_notnull_records),
-           concat(round((sum(e_notnull_records) / sum(e_total_records)) * 100, 2), '%') as e_notnull_rate,
-           sum(f_total_records),
-           sum(f_notnull_records),
-           concat(round((sum(f_notnull_records) / sum(f_total_records)) * 100, 2), '%') as f_notnull_rate,
-           sum(g_total_records),
-           sum(g_notnull_records),
-           concat(round((sum(g_notnull_records) / sum(g_total_records)) * 100, 2), '%') as g_notnull_rate,
-           sum(h_total_records),
-           sum(h_notnull_records),
-           concat(round((sum(h_notnull_records) / sum(h_total_records)) * 100, 2), '%') as h_notnull_rate,
-           sum(i_total_records),
-           sum(i_notnull_records),
-           concat(round((sum(i_notnull_records) / sum(i_total_records)) * 100, 2), '%') as i_notnull_rate,
-           sum(j_total_records),
-           sum(j_notnull_records),
-           concat(round((sum(j_notnull_records) / sum(j_total_records)) * 100, 2), '%') as j_notnull_rate,
-           sum(k_total_records),
-           sum(k_notnull_records),
-           concat(round((sum(k_notnull_records) / sum(k_total_records)) * 100, 2), '%') as k_notnull_rate,
-           sum(association_org_cnt),
-           concat(round((sum(association_org_cnt) / sum(org_cnt)) * 100, 2), '%') as association__rate 
-        from prov_city_summary
-        order by city
         """
-
-    def get_emergency_warning_city_state_sql(self):
-        """应急处地市汇总 SQL"""
-        return f"""
-        select city,
-           org_cnt,
-           real_cnt,
-           concat(round((real_cnt / org_cnt) * 100, 2), '%') as real_rate,
-           other_cnt,
-           concat(round((other_cnt / org_cnt) * 100, 2), '%') as other_rate,
-           e_total_records,
-           e_notnull_records,
-           case when e_total_records >0 then
-           concat(round((e_notnull_records / e_total_records) * 100, 2), '%') end as e_notnull_rate,
-           f_total_records,
-           f_notnull_records,
-           case when f_total_records >0 then
-           concat(round((f_notnull_records / f_total_records) * 100, 2), '%') end as f_notnull_rate,
-           g_total_records,
-           g_notnull_records,
-           case when g_total_records >0 then
-           concat(round((g_notnull_records / g_total_records) * 100, 2), '%') end as g_notnull_rate,
-           h_total_records,
-           h_notnull_records,
-           case when h_total_records >0 then
-           concat(round((h_notnull_records / h_total_records) * 100, 2), '%') end as h_notnull_rate,
-           j_total_records,
-           j_notnull_records,
-           case when j_total_records >0 then
-           concat(round((j_notnull_records / j_total_records) * 100, 2), '%') end as j_notnull_rate,
-           k_total_records,
-           k_notnull_records,
-           case when k_total_records >0 then
-           concat(round((k_notnull_records / k_total_records) * 100, 2), '%') end as k_notnull_rate,
-           association_org_cnt,
-           concat(round((association_org_cnt / org_cnt) * 100, 2), '%') as association__rate
-        from prov_city_summary a
-        union
-        select 'Total',
-           sum(org_cnt),
-           sum(real_cnt),
-           concat(round((sum(real_cnt) / sum(org_cnt)) * 100, 2), '%') as real_rate,
-           sum(other_cnt),
-           concat(round((sum(other_cnt) / sum(org_cnt)) * 100, 2), '%') as other_rate,
-           sum(e_total_records),
-           sum(e_notnull_records),
-           concat(round((sum(e_notnull_records) / sum(e_total_records)) * 100, 2), '%') as e_notnull_rate,
-           sum(f_total_records),
-           sum(f_notnull_records),
-           concat(round((sum(f_notnull_records) / sum(f_total_records)) * 100, 2), '%') as f_notnull_rate,
-           sum(g_total_records),
-           sum(g_notnull_records),
-           concat(round((sum(g_notnull_records) / sum(g_total_records)) * 100, 2), '%') as g_notnull_rate,
-           sum(h_total_records),
-           sum(h_notnull_records),
-           concat(round((sum(h_notnull_records) / sum(h_total_records)) * 100, 2), '%') as h_notnull_rate,
-           sum(j_total_records),
-           sum(j_notnull_records),
-           concat(round((sum(j_notnull_records) / sum(j_total_records)) * 100, 2), '%') as j_notnull_rate,
-           sum(k_total_records),
-           sum(k_notnull_records),
-           concat(round((sum(k_notnull_records) / sum(k_total_records)) * 100, 2), '%') as k_notnull_rate,
-           sum(association_org_cnt),
-           concat(round((sum(association_org_cnt) / sum(org_cnt)) * 100, 2), '%') as association__rate 
-        from prov_city_summary
-        order by city
+        地市州汇总 SQL
         """
-
-    def get_medicine_regulatory_city_state_sql(self):
-        """药政处地市汇总 SQL"""
-        return f"""
+        return """
         select city,
-           org_cnt,
-           other_cnt,
-           concat(round((other_cnt / org_cnt) * 100, 2), '%') as other_rate,
-           e_total_records,
-           e_notnull_records,
-           case when e_total_records >0 then
-           concat(round((e_notnull_records / e_total_records) * 100, 2), '%') end as e_notnull_rate,
-           f_total_records,
-           f_notnull_records,
-           case when f_total_records >0 then
-           concat(round((f_notnull_records / f_total_records) * 100, 2), '%') end as f_notnull_rate,
-           g_total_records,
-           g_notnull_records,
-           case when g_total_records >0 then
-           concat(round((g_notnull_records / g_total_records) * 100, 2), '%') end as g_notnull_rate,
-           h_total_records,
-           h_notnull_records,
-           case when h_total_records >0 then
-           concat(round((h_notnull_records / h_total_records) * 100, 2), '%') end as h_notnull_rate,
-           i_total_records,
-           i_notnull_records,
-           case when i_total_records >0 then
-           concat(round((i_notnull_records / i_total_records) * 100, 2), '%') end as i_notnull_rate,
-           j_total_records,
-           j_notnull_records,
-           case when j_total_records >0 then
-           concat(round((j_notnull_records / j_total_records) * 100, 2), '%') end as j_notnull_rate,
-           k_total_records,
-           k_notnull_records,
-           case when k_total_records >0 then
-           concat(round((k_notnull_records / k_total_records) * 100, 2), '%') end as k_notnull_rate,
-           association_org_cnt,
-           concat(round((association_org_cnt / org_cnt) * 100, 2), '%') as association__rate
-        from prov_city_summary a
-        union
-        select 'Total',
-           sum(org_cnt),
-           sum(other_cnt),
-           concat(round((sum(other_cnt) / sum(org_cnt)) * 100, 2), '%') as other_rate,
-           sum(e_total_records),
-           sum(e_notnull_records),
-           concat(round((sum(e_notnull_records) / sum(e_total_records)) * 100, 2), '%') as e_notnull_rate,
-           sum(f_total_records),
-           sum(f_notnull_records),
-           concat(round((sum(f_notnull_records) / sum(f_total_records)) * 100, 2), '%') as f_notnull_rate,
-           sum(g_total_records),
-           sum(g_notnull_records),
-           concat(round((sum(g_notnull_records) / sum(g_total_records)) * 100, 2), '%') as g_notnull_rate,
-           sum(h_total_records),
-           sum(h_notnull_records),
-           concat(round((sum(h_notnull_records) / sum(h_total_records)) * 100, 2), '%') as h_notnull_rate,
-           sum(i_total_records),
-           sum(i_notnull_records),
-           concat(round((sum(i_notnull_records) / sum(i_total_records)) * 100, 2), '%') as i_notnull_rate,
-           sum(j_total_records),
-           sum(j_notnull_records),
-           concat(round((sum(j_notnull_records) / sum(j_total_records)) * 100, 2), '%') as j_notnull_rate,
-           sum(k_total_records),
-           sum(k_notnull_records),
-           concat(round((sum(k_notnull_records) / sum(k_total_records)) * 100, 2), '%') as k_notnull_rate,
-           sum(association_org_cnt),
-           concat(round((sum(association_org_cnt) / sum(org_cnt)) * 100, 2), '%') as association__rate 
-        from prov_city_summary
-        order by city
+       org_cnt,
+       real_cnt,
+       concat(round((real_cnt / org_cnt) * 100, 2), '%')                  as real_rate,
+       hour_cnt,
+       concat(round((hour_cnt / org_cnt) * 100, 2), '%')                  as hour_rate,
+       other_cnt,
+       concat(round((other_cnt / org_cnt) * 100, 2), '%')                 as other_rate,
+       e_total_records,
+       e_notnull_records,
+       case when e_total_records >0 then 
+       concat(round((e_notnull_records / e_total_records) * 100, 2), '%') end as e_notnull_rate,
+       f_total_records,
+       f_notnull_records,
+       case when f_total_records >0 then 
+       concat(round((f_notnull_records / f_total_records) * 100, 2), '%') end as f_notnull_rate,
+       g_total_records,
+       g_notnull_records,
+       case when g_total_records >0 then 
+       concat(round((g_notnull_records / g_total_records) * 100, 2), '%') end as g_notnull_rate,
+       h_total_records,
+       h_notnull_records,
+       case when h_total_records >0 then 
+       concat(round((h_notnull_records / h_total_records) * 100, 2), '%') end as h_notnull_rate,
+       i_total_records,
+       i_notnull_records,
+       case when i_total_records >0 then 
+       concat(round((i_notnull_records / i_total_records) * 100, 2), '%') end as i_notnull_rate,
+       j_total_records,
+       j_notnull_records,
+       case when j_total_records >0 then 
+       concat(round((j_notnull_records / j_total_records) * 100, 2), '%') end as j_notnull_rate,
+       k_total_records,
+       k_notnull_records,
+       case when k_total_records >0 then 
+       concat(round((k_notnull_records / k_total_records) * 100, 2), '%') end as k_notnull_rate,
+       association_org_cnt,
+       concat(round((association_org_cnt / org_cnt) * 100, 2), '%')       as association__rate
+from prov_city_summary a
+union
+select 'Total'                                                                            city,
+       sum(org_cnt),
+       sum(real_cnt),
+       concat(round((sum(real_cnt) / sum(org_cnt)) * 100, 2), '%')                  as real_rate,
+       sum(hour_cnt)                                                                   hour_cnt,
+       concat(round((sum(hour_cnt) / sum(org_cnt)) * 100, 2), '%')                  as hour_rate,
+       sum(other_cnt)                                                                  other_cnt,
+       concat(round((sum(other_cnt) / sum(org_cnt)) * 100, 2), '%')                 as other_rate,
+       sum(e_total_records)                                                            e_total_records,
+       sum(e_notnull_records)                                                          e_notnull_records,
+       concat(round((sum(e_notnull_records) / sum(e_total_records)) * 100, 2), '%') as e_notnull_rate,
+       sum(f_total_records)                                                            f_total_records,
+       sum(f_notnull_records)                                                          f_notnull_records,
+       concat(round((sum(f_notnull_records) / sum(f_total_records)) * 100, 2), '%') as f_notnull_rate,
+       sum(g_total_records) g_total_records,
+       sum(g_notnull_records)  g_notnull_records,
+       concat(round((sum(g_notnull_records) / sum(g_total_records)) * 100, 2), '%') as g_notnull_rate,
+       sum(h_total_records) h_total_records,
+       sum(h_notnull_records) h_notnull_records,
+       concat(round((sum(h_notnull_records) / sum(h_total_records)) * 100, 2), '%') as h_notnull_rate,
+       sum(i_total_records)                                                            i_total_records,
+       sum(i_notnull_records)                                                          i_notnull_records,
+       concat(round((sum(i_notnull_records) / sum(i_total_records)) * 100, 2), '%')    i_not_notnull_rate,
+       sum(j_total_records)                                                            j_total_records,
+       sum(j_notnull_records)                                                          j_notnull_records,
+       concat(round((sum(j_notnull_records) / sum(j_total_records)) * 100, 2), '%')    j_not_notnull_rate,
+       sum(k_total_records)                                                            k_total_records,
+       sum(k_notnull_records)                                                          k_notnull_records,
+       concat(round((sum(k_notnull_records) / sum(k_total_records)) * 100, 2), '%')    k_not_notnull_rate,
+       sum(association_org_cnt)                                                        association_org_cnt,
+       concat(round((sum(association_org_cnt) / sum(org_cnt)) * 100, 2), '%')       as association__rate
+from prov_city_summary
+order by city
         """
-
         
-
-    # 获取机构汇总 SQL
     def get_org_summary_sql(self):
-        """机构汇总 SQL 分发方法"""
-        dept_key = self.get_dept_key()
-        if dept_key == "early_warning":
-            return self.get_early_warning_org_summary_sql()
-        elif dept_key == "emergency_warning":
-            return self.get_emergency_warning_org_summary_sql()
-        else:
-            return self.get_medicine_regulatory_org_summary_sql()
-
-    # 获取预警处机构汇总 SQL
-    def get_early_warning_org_summary_sql(self):
-        """预警处机构汇总 SQL"""
-        return f"""
-        select a.city, a.org_code, a.org_name,
-           b.total_records, b.compliance_records,
-           case when b.total_records is null then null when b.total_records = 0 then '-' else concat(b.compliance_rate, '%') end compliance_rate,
-           c.total_records, c.compliance_records,
-           case when c.total_records is null then null when c.total_records = 0 then '-' else concat(c.compliance_rate, '%') end compliance_rate,
-           d.total_records, d.compliance_records,
-           case when d.total_records is null then null when d.total_records = 0 then '-' else concat(d.compliance_rate, '%') end compliance_rate,
-           e.total_records,
-           e.notnull_records,
-           case when e.total_records is null then null when e.total_records = 0 then '-' else concat(e.notnull_rate, '%') end notnull_rate,
-           f.total_records,
-           f.notnull_records,
-           case when f.total_records is null then null when f.total_records = 0 then '-' else concat(f.notnull_rate, '%') end notnull_rate,
-           g.total_records,
-           g.notnull_records,
-           case when g.total_records is null then null when g.total_records = 0 then '-' else concat(g.notnull_rate, '%') end notnull_rate,
-           h.total_records,
-           h.notnull_records,
-           case when h.total_records is null then null when h.total_records = 0 then '-' else concat(h.notnull_rate, '%') end notnull_rate,
-           i.total_records,
-           i.notnull_records,
-           case when i.total_records is null then null when i.total_records = 0 then '-' else concat(i.notnull_rate, '%') end notnull_rate,
-           j.total_records,
-           j.notnull_records,
-           case when j.total_records is null then null when j.total_records = 0 then '-' else concat(j.notnull_rate, '%') end notnull_rate,
-           k.total_records,
-           k.notnull_records,
-           case when k.total_records is null then null when k.total_records = 0 then '-' else concat(k.notnull_rate, '%') end notnull_rate,
-           l.total_records,
-           l.association_records,
-           case when l.total_records is null then null when l.total_records = 0 then '-' else concat(l.association_rate, '%') end association_rate,
-           m.total_records,
-           m.association_records,
-           case when m.total_records is null then null when m.total_records = 0 then '-' else concat(m.association_rate, '%') end association_rate,
-           n.total_records,
-           n.association_records,
-           case when n.total_records is null then null when n.total_records = 0 then '-' else concat(n.association_rate, '%') end association_rate
-        from org_list a
+        """
+        机构汇总 SQL
+        """
+        return """
+         select a.city,
+       a.org_code,
+       a.org_name,
+       b.total_records,
+       b.compliance_records,
+       case
+           when b.total_records is null then null
+           when b.total_records = 0 then '-'
+           else concat(b.compliance_rate, '%') end  compliance_rate,
+       c.total_records,
+       c.compliance_records,
+       case
+           when c.total_records is null then null
+           when c.total_records = 0 then '-'
+           else concat(c.compliance_rate, '%') end  compliance_rate,
+       d.total_records,
+       d.compliance_records,
+       case
+           when d.total_records is null then null
+           when d.total_records = 0 then '-'
+           else concat(d.compliance_rate, '%') end  compliance_rate,
+       e.total_records,
+       e.notnull_records,
+       case
+           when e.total_records is null then null
+           when e.total_records = 0 then '-'
+           else concat(e.notnull_rate, '%') end     notnull_rate,
+       f.total_records,
+       f.notnull_records,
+       case
+           when f.total_records is null then null
+           when f.total_records = 0 then '-'
+           else concat(f.notnull_rate, '%') end     notnull_rate,
+       g.total_records,
+       g.notnull_records,
+       case
+           when g.total_records is null then null
+           when g.total_records = 0 then '-'
+           else concat(g.notnull_rate, '%') end     notnull_rate,
+       h.total_records,
+       h.notnull_records,
+       case
+           when h.total_records is null then null
+           when h.total_records = 0 then '-'
+           else concat(h.notnull_rate, '%') end     notnull_rate,
+       i.total_records,
+       i.notnull_records,
+       case
+           when i.total_records is null then null
+           when i.total_records = 0 then '-'
+           else concat(i.notnull_rate, '%') end     notnull_rate,
+       j.total_records,
+       j.notnull_records,
+       case
+           when j.total_records is null then null
+           when j.total_records = 0 then '-'
+           else concat(j.notnull_rate, '%') end     notnull_rate,   
+       k.total_records,
+       k.notnull_records,
+       case
+              when k.total_records is null then null
+              when k.total_records = 0 then '-'
+              else concat(k.notnull_rate, '%') end     notnull_rate,
+       l.total_records,
+       l.association_records,
+       case
+            when l.total_records is null then null
+            when l.total_records = 0 then '-'
+            else concat(l.association_rate, '%') end association_rate,
+       m.total_records,
+       m.association_records,
+       case
+           when m.total_records is null then null
+           when m.total_records = 0 then '-'
+           else concat(m.association_rate, '%') end association_rate,
+       n.total_records,
+       n.association_records,
+       case
+           when n.total_records is null then null
+           when n.total_records = 0 then '-'
+           else concat(n.association_rate, '%') end association_rate
+from org_list a
          left join prov_timeliness_org b on b.org_code = a.org_code and b.table_level = '1'
          left join prov_timeliness_org c on c.org_code = a.org_code and c.table_level = '2'
          left join prov_timeliness_org d on d.org_code = a.org_code and d.table_level = '3'
@@ -2372,114 +2029,9 @@ in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realt
          left join prov_association_org l on l.org_code = a.org_code and l.association_table = 'pro_base_person_ylfw'
          left join prov_association_org m on m.org_code = a.org_code and m.association_table = 'pro_opt_diagnosisbreakdown,pro_ipt_diagnosisbreakdown'
          left join prov_association_org n on n.org_code = a.org_code and n.association_table = 'all'
-        where a.is_516_flag = '是'
-        order by a.city, a.org_code
+where a.is_516_flag = '是'
+order by a.city, a.org_code
         """
-
-    # 获取应急处机构汇总 SQL
-    def get_emergency_warning_org_summary_sql(self):
-        """应急处机构汇总 SQL"""
-        return f"""
-        select a.city, a.org_code, a.org_name,
-           b.total_records, b.compliance_records,
-           case when b.total_records is null then null when b.total_records = 0 then '-' else concat(b.compliance_rate, '%') end compliance_rate,
-           d.total_records, d.compliance_records,
-           case when d.total_records is null then null when d.total_records = 0 then '-' else concat(d.compliance_rate, '%') end compliance_rate,
-           e.total_records,
-           e.notnull_records,
-           case when e.total_records is null then null when e.total_records = 0 then '-' else concat(e.notnull_rate, '%') end notnull_rate,
-           f.total_records,
-           f.notnull_records,
-           case when f.total_records is null then null when f.total_records = 0 then '-' else concat(f.notnull_rate, '%') end notnull_rate,
-           g.total_records,
-           g.notnull_records,
-           case when g.total_records is null then null when g.total_records = 0 then '-' else concat(g.notnull_rate, '%') end notnull_rate,
-           h.total_records,
-           h.notnull_records,
-           case when h.total_records is null then null when h.total_records = 0 then '-' else concat(h.notnull_rate, '%') end notnull_rate,
-           j.total_records,
-           j.notnull_records,
-           case when j.total_records is null then null when j.total_records = 0 then '-' else concat(j.notnull_rate, '%') end notnull_rate,
-           k.total_records,
-           k.notnull_records,
-           case when k.total_records is null then null when k.total_records = 0 then '-' else concat(k.notnull_rate, '%') end notnull_rate,
-           l.total_records,
-           l.association_records,
-           case when l.total_records is null then null when l.total_records = 0 then '-' else concat(l.association_rate, '%') end association_rate,
-           m.total_records,
-           m.association_records,
-           case when m.total_records is null then null when m.total_records = 0 then '-' else concat(m.association_rate, '%') end association_rate,
-           n.total_records,
-           n.association_records,
-           case when n.total_records is null then null when n.total_records = 0 then '-' else concat(n.association_rate, '%') end association_rate
-        from org_list a
-         left join prov_timeliness_org b on b.org_code = a.org_code and b.table_level = '1'
-         left join prov_timeliness_org d on d.org_code = a.org_code and d.table_level = '3'
-         left join prov_column_level_org e on e.org_code = a.org_code and e.column_level = '1'
-         left join prov_column_level_org f on f.org_code = a.org_code and f.column_level = '2'
-         left join prov_column_level_org g on g.org_code = a.org_code and g.column_level = '3'
-         left join prov_column_level_org h on h.org_code = a.org_code and h.column_level = 'update_1'
-         left join prov_column_level_org j on j.org_code = a.org_code and j.column_level = 'version_2_column_level_1'
-         left join prov_column_level_org k on k.org_code = a.org_code and k.column_level = 'version_2_column_level_3'
-         left join prov_association_org l on l.org_code = a.org_code and l.association_table = 'master'
-         left join prov_association_org m on m.org_code = a.org_code and m.association_table = 'other'
-         left join prov_association_org n on n.org_code = a.org_code and n.association_table = 'all'
-        where a.is_516_flag = '是'
-        order by a.city, a.org_code
-        """
-
-    def get_medicine_regulatory_org_summary_sql(self):
-        """药政处机构汇总 SQL"""
-        return f"""
-        select a.city, a.org_code, a.org_name,
-           d.total_records, d.compliance_records,
-           case when d.total_records is null then null when d.total_records = 0 then '-' else concat(d.compliance_rate, '%') end compliance_rate,
-           e.total_records,
-           e.notnull_records,
-           case when e.total_records is null then null when e.total_records = 0 then '-' else concat(e.notnull_rate, '%') end notnull_rate,
-           f.total_records,
-           f.notnull_records,
-           case when f.total_records is null then null when f.total_records = 0 then '-' else concat(f.notnull_rate, '%') end notnull_rate,
-           g.total_records,
-           g.notnull_records,
-           case when g.total_records is null then null when g.total_records = 0 then '-' else concat(g.notnull_rate, '%') end notnull_rate,
-           h.total_records,
-           h.notnull_records,
-           case when h.total_records is null then null when h.total_records = 0 then '-' else concat(h.notnull_rate, '%') end notnull_rate,
-           i.total_records,
-           i.notnull_records,
-           case when i.total_records is null then null when i.total_records = 0 then '-' else concat(i.notnull_rate, '%') end notnull_rate,
-           j.total_records,
-           j.notnull_records,
-           case when j.total_records is null then null when j.total_records = 0 then '-' else concat(j.notnull_rate, '%') end notnull_rate,
-           k.total_records,
-           k.notnull_records,
-           case when k.total_records is null then null when k.total_records = 0 then '-' else concat(k.notnull_rate, '%') end notnull_rate,
-           l.total_records,
-           l.association_records,
-           case when l.total_records is null then null when l.total_records = 0 then '-' else concat(l.association_rate, '%') end association_rate,
-           m.total_records,
-           m.association_records,
-           case when m.total_records is null then null when m.total_records = 0 then '-' else concat(m.association_rate, '%') end association_rate,
-           n.total_records,
-           n.association_records,
-           case when n.total_records is null then null when n.total_records = 0 then '-' else concat(n.association_rate, '%') end association_rate
-        from org_list a
-         left join prov_timeliness_org d on d.org_code = a.org_code and d.table_level = '3'
-         left join prov_column_level_org e on e.org_code = a.org_code and e.column_level = '1'
-         left join prov_column_level_org f on f.org_code = a.org_code and f.column_level = '2'
-         left join prov_column_level_org g on g.org_code = a.org_code and g.column_level = '3'
-         left join prov_column_level_org h on h.org_code = a.org_code and h.column_level = 'update_1'
-         left join prov_column_level_org i on i.org_code = a.org_code and i.column_level = 'update_3'
-         left join prov_column_level_org j on j.org_code = a.org_code and j.column_level = 'version_2_column_level_1'
-         left join prov_column_level_org k on k.org_code = a.org_code and k.column_level = 'version_2_column_level_3'
-         left join prov_association_org l on l.org_code = a.org_code and l.association_table = 'pro_base_person_ylfw'
-         left join prov_association_org m on m.org_code = a.org_code and m.association_table = 'pro_opt_diagnosisbreakdown,pro_ipt_diagnosisbreakdown'
-         left join prov_association_org n on n.org_code = a.org_code and n.association_table = 'all'
-        where a.is_516_flag = '是'
-        order by a.city, a.org_code
-        """
-
         
     def get_realtime_detail_sql(self):
         """
@@ -2500,7 +2052,7 @@ in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realt
            when total_records is null then null
            when total_records = 0 then '-'
            else
-               concat(round((b.compliance_records/b.total_records)*100,2), '%') end compliance_rate,
+               concat(round(b.compliance_rate*100,2), '%') end compliance_rate,
        c.quality_flag,
        c.responsible_dept_codes
 from org_list a
@@ -2527,7 +2079,7 @@ select a.city,
            when sum(b.total_records) is null then null
            when sum(b.total_records) = 0 then '-'
            else
-               concat(round((sum(b.notnull_records)/sum(b.total_records))*100,2), '%') end notnull_rate,
+               concat(round(sum(b.notnull_records)/sum(b.total_records)*100,2), '%') end notnull_rate,
        c.quality_flag,
        c.responsible_dept_codes
 from org_list a
@@ -2555,7 +2107,7 @@ order by a.city, a.org_code,c.table_seq
            when sum(b.total_records) is null then null
            when sum(b.total_records) = 0 then '-'
            else
-               concat(round((sum(b.notnull_records)/sum(b.total_records))*100,2), '%') end notnull_rate,
+               concat(round(sum(b.notnull_records)/sum(b.total_records)*100,2), '%') end notnull_rate,
        c.quality_flag,
        c.responsible_dept_codes
 from org_list a
@@ -2582,7 +2134,7 @@ order by a.city, a.org_code,c.table_seq
            when sum(b.total_records) is null then null
            when sum(b.total_records) = 0 then '-'
            else
-               concat(round((sum(b.notnull_records)/sum(b.total_records))*100,2), '%') end notnull_rate,
+               concat(round(sum(b.notnull_records)/sum(b.total_records)*100,2), '%') end notnull_rate,
        c.quality_flag,
        c.responsible_dept_codes
 from org_list a
@@ -2595,7 +2147,7 @@ order by a.city, a.org_code,c.table_seq
 
     def get_column_version_2_sql(self):
         """
-           条件必填第二批次更新 SQL
+           关联关系明细 SQL
            """
         condition = self.get_national_condition()
         return f"""
@@ -2610,7 +2162,7 @@ order by a.city, a.org_code,c.table_seq
            when sum(b.total_records) is null then null
            when sum(b.total_records) = 0 then '-'
            else
-               concat(round((sum(b.notnull_records)/sum(b.total_records))*100,2), '%') end notnull_rate,
+               concat(round(sum(b.notnull_records)/sum(b.total_records)*100,2), '%') end notnull_rate,
        c.quality_flag,
        c.responsible_dept_codes
 from org_list a
@@ -2622,15 +2174,9 @@ order by a.city, a.org_code,c.table_seq
                 """
         
     def get_association_sql(self):
-        """关联关系明细 SQL 分发方法"""
-        dept_key = self.get_dept_key()
-        if dept_key == "emergency_warning":
-            return self.get_emergency_warning_association_sql()
-        else:
-            return self.get_early_warning_association_sql()
-
-    def get_early_warning_association_sql(self):
-        """预警处关联关系明细 SQL"""
+        """
+        关联关系明细 SQL
+        """
         condition = self.get_national_condition()
         return f"""
         select a.city,a.org_code,a.org_name,
@@ -2642,7 +2188,7 @@ order by a.city, a.org_code,c.table_seq
        b.association_records,
        case when total_records = 0 then '-'
            else
-               concat(round((b.association_records/b.total_records)*100,2),'%')
+               concat(round(b.association_rate*100,2),'%')
            end association_rate,
        c.quality_flag,
        c.responsible_dept_codes
@@ -2653,42 +2199,12 @@ order by a.city, a.org_code,c.table_seq
 where a.is_516_flag ='是'
 order by a.city,a.org_code
         """
-
-    def get_emergency_warning_association_sql(self):
-        """应急处关联关系明细 SQL"""
-        return f"""
-        select a.city,a.org_code,a.org_name,
-       b.table_name,
-       c.table_comment table_comment,
-       b.association_table_name,
-       d.table_comment   association_table_comment,
-       b.total_records,
-       b.association_records,
-       case when total_records = 0 then '-'
-           else
-               concat(round((b.association_records/b.total_records)*100,2),'%')
-           end association_rate,
-       c.quality_flag,
-       IFNULL(e.responsible_dept_codes,c.responsible_dept_codes) as responsible_dept_codes
-       from org_list a
-    left join prov_association_detail b on b.org_code = a.org_code
-    left join prov_table_list c on b.table_name = c.table_name 
-    left join prov_table_list d on b.association_table_name = d.table_name
-    join emergency_association_config e on e.table_name = b.table_name and e.association_table_name = b.association_table_name and e.enable_status = '1'
-where a.is_516_flag ='是'
-order by a.city,a.org_code
-        """
         
     def get_business_sql(self):
         """
         业务主键唯一率 SQL
         """
-        dept_config = self.get_current_dept_config()
-        dept_flag = dept_config["table_flag"]
-        condition = f"and c.{dept_flag}='1'"
-        
-        
-        return f"""
+        return """
         select a.city,a.org_code,a.org_name,
        b.table_name,
        c.table_comment table_comment,
@@ -2696,12 +2212,12 @@ order by a.city,a.org_code
        b.unique_records,
        case when total_records = 0 then '-'
            else
-               concat(round((b.unique_records/b.total_records)*100,2),'%')
+               concat(round(b.unique_rate*100,2),'%')
            end unique_rate,
        c.responsible_dept_codes
        from org_list a
     left join prov_business_detail b on b.org_code = a.org_code
-         join prov_table_list c on b.table_name = c.table_name {condition}
+         join prov_table_list c on b.table_name = c.table_name
 where a.is_516_flag ='是'
 order by a.city,a.org_code
         """
@@ -2726,7 +2242,7 @@ order by a.city,a.org_code
        when b.total_records is null then null
            when b.total_records = 0 then '-'
            else
-               concat(round((b.notnull_records/b.total_records)*100,2), '%')
+               concat(round(b.notnull_rate*100,2), '%')
            end notnull_rate,
        c.quality_flag,
        c.responsible_dept_codes
@@ -2757,7 +2273,7 @@ order by a.city, a.org_code
        when b.total_records is null then null
            when b.total_records = 0 then '-'
            else
-               concat(round((b.notnull_records/b.total_records)*100,2), '%')
+               concat(round(b.notnull_rate*100,2), '%')
            end notnull_rate,
            c.quality_flag,
            c.responsible_dept_codes

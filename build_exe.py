@@ -40,8 +40,10 @@ FILES_TO_COPY = [
     "prov_report.db",
     "prov_generate_data.sql",
     "emergency_warning.sql",
+    "emergency_warning_all.sql",
     "疾控下发汇总报告模板.xlsx",
     "应急处下发汇总报告_模板.xlsx",
+    "应急处下发汇总报告_模板_全部.xlsx",
     "版本日志.txt"
 ]
 

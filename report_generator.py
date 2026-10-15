@@ -16,10 +16,19 @@ from tkcalendar import Calendar
 warnings.filterwarnings('ignore', message='pandas only supports SQLAlchemy')
 
 
-VERSION = "V1.12"
-BUILD_DATE = "2026-10-12"
+VERSION = "V1.13"
+BUILD_DATE = "2026-10-14"
 
 # 业务处室配置
+# 字段说明：
+#   name             界面下拉框显示名称
+#   table_flag       prov_table_list 中过滤表范围的标志字段
+#   template         数据导出默认模板文件
+#   has_national_flag 是否有省标/国标区分（仅预警处为 True）
+#   sql_file         数据加工使用的整体 SQL 文件（不做语句拼接）
+#   sql_variant      导出 SQL 复用的处室版本，缺省为自身 key
+#   visible          是否在界面下拉框中显示
+#   report_prefix    导出文件名前缀（预警处除外，其前缀随国标/全部切换）
 DEPT_CONFIG = {
     "early_warning": {
         "name": "预警处",
@@ -27,6 +36,7 @@ DEPT_CONFIG = {
         "template": "疾控下发汇总报告模板.xlsx",
         "has_national_flag": True,  # 只有预警处有省标/国标区分
         "sql_file": "prov_generate_data.sql",
+        "visible": True,
         "export_sheets": [
             '地市(州)', '机构汇总', '时效性明细', '必填字段完整性',
             '重要建议填字段完整性', '条件必填字段完整性',
@@ -35,11 +45,31 @@ DEPT_CONFIG = {
         ]
     },
     "emergency_warning": {
-        "name": "应急处",
+        "name": "应急处(11张表)",
         "table_flag": "emergency_warning",
         "template": "应急处下发汇总报告_模板.xlsx",
         "has_national_flag": False,
         "sql_file": "emergency_warning.sql",
+        "visible": True,
+        "report_prefix": "应急处下发汇总报告(省标表11张表)_质控日期：",
+        "export_sheets": [
+            '地市(州)', '机构汇总', '时效性明细', '必填字段完整性',
+            '重要建议填字段完整性', '条件必填字段完整性',
+            '第二批次更新字段明细', '关联关系明细',
+            '主诉明细', '现病史明细'
+        ]
+    },
+    "emergency_warning_all": {
+        "name": "应急处(41张表)",
+        "table_flag": "enable_status",
+        "template": "应急处下发汇总报告_模板_全部.xlsx",
+        "has_national_flag": False,
+        "sql_file": "emergency_warning_all.sql",
+        # 机构汇总、全部关联关系等导出 SQL 复用应急处版本（按应急处逻辑计算）
+        "sql_variant": "emergency_warning",
+        "visible": True,
+        "report_prefix": "应急处下发汇总报告(省标表41张表)_质控日期：",
+        # 模板复制自疾控模板（共 10 个 Sheet，无"业务主键唯一率"），Sheet 与应急处(11张表)一致
         "export_sheets": [
             '地市(州)', '机构汇总', '时效性明细', '必填字段完整性',
             '重要建议填字段完整性', '条件必填字段完整性',
@@ -53,6 +83,8 @@ DEPT_CONFIG = {
         "template": "药政处下发汇总报告_模板.xlsx",
         "has_national_flag": False,
         "sql_file": "medicine_regulatory.sql",
+        "visible": False,  # 界面暂不显示
+        "report_prefix": "药政处下发汇总报告(省标表)_质控日期：",
         "export_sheets": [
             '地市(州)', '机构汇总', '时效性明细', '必填字段完整性',
             '重要建议填字段完整性', '条件必填字段完整性',
@@ -327,6 +359,11 @@ class ReportGeneratorTool:
         dept_config = self.get_current_dept_config()
         sql_file = dept_config.get("sql_file", "prov_generate_data.sql")
         return resolve_resource(sql_file)
+
+    def get_sql_variant(self):
+        """获取导出 SQL 复用的处室版本（sql_variant 缺省为处室自身 key）"""
+        dept_config = self.get_current_dept_config()
+        return dept_config.get("sql_variant", self.get_dept_key())
     
     def on_dept_change(self, event=None):
         """切换业务处室时的回调"""
@@ -480,11 +517,10 @@ class ReportGeneratorTool:
         dept_label = ttk.Label(dept_frame, text="业务处室：", font=('微软雅黑', 10, 'bold'))
         dept_label.pack(side=tk.LEFT, padx=5)
 
-        dept_combobox = ttk.Combobox(dept_frame, textvariable=self.dept_var, state="readonly", width=10)
-        dept_combobox['values'] = (
-            "预警处",
-            "应急处", 
-            # "药政处"
+        dept_combobox = ttk.Combobox(dept_frame, textvariable=self.dept_var, state="readonly", width=16)
+        # 下拉选项从 DEPT_CONFIG 动态生成（visible=False 的处室不显示）
+        dept_combobox['values'] = tuple(
+            cfg["name"] for cfg in DEPT_CONFIG.values() if cfg.get("visible", True)
         )
         dept_combobox.current(0)
         dept_combobox.pack(side=tk.LEFT, padx=5)
@@ -761,7 +797,7 @@ class ReportGeneratorTool:
         dept_config = self.get_current_dept_config()
         dept_name = dept_config["name"]
         dept_key = self.get_dept_key()
-        
+
         if dept_key == "early_warning":
             # 预警处：有省标/国标区分
             flag = getattr(self, 'national_flag_var', None)
@@ -769,15 +805,9 @@ class ReportGeneratorTool:
                 return "疾控下发汇总报告(省标表)_质控日期："
             else:
                 return "疾控下发汇总报告(省标对照国标)_质控日期："
-        elif dept_key == "emergency_warning":
-            # 应急处：只有省标表
-            return "应急处下发汇总报告(省标表)_质控日期："
-        elif dept_key == "medicine_regulatory":
-            # 药政处：只有省标表
-            return "药政处下发汇总报告(省标表)_质控日期："
         else:
-            # 默认
-            return "疾控下发汇总报告(省标对照国标)_质控日期："
+            # 其他处室：从配置读取文件名前缀
+            return dept_config.get("report_prefix", "疾控下发汇总报告(省标对照国标)_质控日期：")
 
     def update_export_filename(self):
         """更新导出文件名中的质控日期"""
@@ -1012,9 +1042,13 @@ class ReportGeneratorTool:
                     sql_content = sql_content.replace("and a.national_flag='1'", "")
 
                 self.process_text.insert(tk.END, f"执行 SQL 脚本：{sql_file}\n\n")
-                
+
                 conn = duckdb.connect(self.db_path)
-                
+
+                # 当前处室依赖 prov_table_list.enable_status 时，确保该字段存在
+                if dept_flag == "enable_status":
+                    self._ensure_enable_status_column(conn)
+
                 # 改进 SQL 分割逻辑，处理多行 SQL 语句
                 statements = []
                 current_stmt = []
@@ -1084,7 +1118,30 @@ in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realt
                 
         thread = threading.Thread(target=do_process)
         thread.start()
-        
+
+    def _ensure_enable_status_column(self, conn):
+        """确保 prov_table_list 存在 enable_status 字段。
+
+        应急处(41张表)按 prov_table_list.enable_status 关联过滤。
+        老版本数据库无此字段时自动补齐：41 张正式表初始化为 1，
+        组合行（table_name 含逗号）初始化为 0；字段已存在时不改动任何数据。
+        """
+        cols = [row[1] for row in conn.execute("PRAGMA table_info('prov_table_list')").fetchall()]
+        if 'enable_status' in cols:
+            return
+        self.process_text.insert(tk.END, " prov_table_list 缺少 enable_status 字段，自动补齐...\n")
+        conn.execute("ALTER TABLE prov_table_list ADD COLUMN enable_status INTEGER")
+        conn.execute("""
+            UPDATE prov_table_list
+            SET enable_status = CASE WHEN table_name LIKE '%,%' THEN 0 ELSE 1 END
+        """)
+        conn.commit()
+        cnt = conn.execute("SELECT COUNT(*) FROM prov_table_list WHERE enable_status = 1").fetchone()[0]
+        self.process_text.insert(
+            tk.END,
+            f"✓ 已初始化 enable_status：{cnt} 张表标记为 1（如需调整请维护 prov_table_list 后重新加工）\n\n"
+        )
+
     def create_data_export_tab(self, parent):
         """创建数据导出 Tab"""
         # 左右对称 padding: (左, 上, 右, 下)
@@ -2065,15 +2122,16 @@ in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realt
         dialog.wait_window()
 
     def get_national_condition(self):
-        """获取national_flag和业务处室过滤条件"""
+        """获取national_flag和业务处室过滤条件（配置驱动）"""
         dept_config = self.get_current_dept_config()
         dept_flag = dept_config["table_flag"]
-        
+
         condition = f"and c.{dept_flag}='1'"
-        
-        if self.national_flag_var.get() == "national":
+
+        # 仅预警处有省标/国标区分；其他处室强制不附加 national_flag 条件
+        if dept_config.get("has_national_flag") and self.national_flag_var.get() == "national":
             condition += " and c.national_flag='1'"
-        
+
         return condition
         
 	
@@ -2081,12 +2139,17 @@ in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realt
     # 获取地市州汇总 SQL
     def get_city_state_sql(self):
         """地市州汇总 SQL 分发方法"""
+        # 处室存在专属地市汇总 SQL 时优先使用（如应急处(41张表)含2小时列）
         dept_key = self.get_dept_key()
-        if dept_key == "early_warning": # 预警处
+        own_method = getattr(self, f'get_{dept_key}_city_state_sql', None)
+        if own_method:
+            return own_method()
+        variant = self.get_sql_variant()
+        if variant == "early_warning": # 预警处
             return self.get_early_warning_city_state_sql()
-        elif dept_key == "emergency_warning": # 应急处
+        elif variant == "emergency_warning": # 应急处（含41张表）
             return self.get_emergency_warning_city_state_sql()
-        else: # 药政处  
+        else: # 药政处
             return self.get_medicine_regulatory_city_state_sql()
 
     def get_early_warning_city_state_sql(self):
@@ -2234,6 +2297,77 @@ in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realt
         order by city
         """
 
+    def get_emergency_warning_all_city_state_sql(self):
+        """应急处(41张表)地市汇总 SQL（含2小时列，共28列）"""
+        return f"""
+        select city,
+           org_cnt,
+           real_cnt,
+           concat(round((real_cnt / org_cnt) * 100, 2), '%') as real_rate,
+           hour_cnt,
+           concat(round((hour_cnt / org_cnt) * 100, 2), '%') as hour_rate,
+           other_cnt,
+           concat(round((other_cnt / org_cnt) * 100, 2), '%') as other_rate,
+           e_total_records,
+           e_notnull_records,
+           case when e_total_records >0 then
+           concat(round((e_notnull_records / e_total_records) * 100, 2), '%') end as e_notnull_rate,
+           f_total_records,
+           f_notnull_records,
+           case when f_total_records >0 then
+           concat(round((f_notnull_records / f_total_records) * 100, 2), '%') end as f_notnull_rate,
+           g_total_records,
+           g_notnull_records,
+           case when g_total_records >0 then
+           concat(round((g_notnull_records / g_total_records) * 100, 2), '%') end as g_notnull_rate,
+           h_total_records,
+           h_notnull_records,
+           case when h_total_records >0 then
+           concat(round((h_notnull_records / h_total_records) * 100, 2), '%') end as h_notnull_rate,
+           j_total_records,
+           j_notnull_records,
+           case when j_total_records >0 then
+           concat(round((j_notnull_records / j_total_records) * 100, 2), '%') end as j_notnull_rate,
+           k_total_records,
+           k_notnull_records,
+           case when k_total_records >0 then
+           concat(round((k_notnull_records / k_total_records) * 100, 2), '%') end as k_notnull_rate,
+           association_org_cnt,
+           concat(round((association_org_cnt / org_cnt) * 100, 2), '%') as association__rate
+        from prov_city_summary a
+        union
+        select 'Total',
+           sum(org_cnt),
+           sum(real_cnt),
+           concat(round((sum(real_cnt) / sum(org_cnt)) * 100, 2), '%') as real_rate,
+           sum(hour_cnt),
+           concat(round((sum(hour_cnt) / sum(org_cnt)) * 100, 2), '%') as hour_rate,
+           sum(other_cnt),
+           concat(round((sum(other_cnt) / sum(org_cnt)) * 100, 2), '%') as other_rate,
+           sum(e_total_records),
+           sum(e_notnull_records),
+           concat(round((sum(e_notnull_records) / sum(e_total_records)) * 100, 2), '%') as e_notnull_rate,
+           sum(f_total_records),
+           sum(f_notnull_records),
+           concat(round((sum(f_notnull_records) / sum(f_total_records)) * 100, 2), '%') as f_notnull_rate,
+           sum(g_total_records),
+           sum(g_notnull_records),
+           concat(round((sum(g_notnull_records) / sum(g_total_records)) * 100, 2), '%') as g_notnull_rate,
+           sum(h_total_records),
+           sum(h_notnull_records),
+           concat(round((sum(h_notnull_records) / sum(h_total_records)) * 100, 2), '%') as h_notnull_rate,
+           sum(j_total_records),
+           sum(j_notnull_records),
+           concat(round((sum(j_notnull_records) / sum(j_total_records)) * 100, 2), '%') as j_notnull_rate,
+           sum(k_total_records),
+           sum(k_notnull_records),
+           concat(round((sum(k_notnull_records) / sum(k_total_records)) * 100, 2), '%') as k_notnull_rate,
+           sum(association_org_cnt),
+           concat(round((sum(association_org_cnt) / sum(org_cnt)) * 100, 2), '%') as association__rate 
+        from prov_city_summary
+        order by city
+        """
+
     def get_medicine_regulatory_city_state_sql(self):
         """药政处地市汇总 SQL"""
         return f"""
@@ -2309,10 +2443,15 @@ in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realt
     # 获取机构汇总 SQL
     def get_org_summary_sql(self):
         """机构汇总 SQL 分发方法"""
+        # 处室存在专属机构汇总 SQL 时优先使用（如应急处(41张表)含2小时列）
         dept_key = self.get_dept_key()
-        if dept_key == "early_warning":
+        own_method = getattr(self, f'get_{dept_key}_org_summary_sql', None)
+        if own_method:
+            return own_method()
+        variant = self.get_sql_variant()
+        if variant == "early_warning":
             return self.get_early_warning_org_summary_sql()
-        elif dept_key == "emergency_warning":
+        elif variant == "emergency_warning":
             return self.get_emergency_warning_org_summary_sql()
         else:
             return self.get_medicine_regulatory_org_summary_sql()
@@ -2414,6 +2553,60 @@ in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realt
            case when n.total_records is null then null when n.total_records = 0 then '-' else concat(n.association_rate, '%') end association_rate
         from org_list a
          left join prov_timeliness_org b on b.org_code = a.org_code and b.table_level = '1'
+         left join prov_timeliness_org d on d.org_code = a.org_code and d.table_level = '3'
+         left join prov_column_level_org e on e.org_code = a.org_code and e.column_level = '1'
+         left join prov_column_level_org f on f.org_code = a.org_code and f.column_level = '2'
+         left join prov_column_level_org g on g.org_code = a.org_code and g.column_level = '3'
+         left join prov_column_level_org h on h.org_code = a.org_code and h.column_level = 'update_1'
+         left join prov_column_level_org j on j.org_code = a.org_code and j.column_level = 'version_2_column_level_1'
+         left join prov_column_level_org k on k.org_code = a.org_code and k.column_level = 'version_2_column_level_3'
+         left join prov_association_org l on l.org_code = a.org_code and l.association_table = 'master'
+         left join prov_association_org m on m.org_code = a.org_code and m.association_table = 'other'
+         left join prov_association_org n on n.org_code = a.org_code and n.association_table = 'all'
+        where a.is_516_flag = '是'
+        order by a.city, a.org_code
+        """
+
+    def get_emergency_warning_all_org_summary_sql(self):
+        """应急处(41张表)机构汇总 SQL（含2小时列，共39列）"""
+        return f"""
+        select a.city, a.org_code, a.org_name,
+           b.total_records, b.compliance_records,
+           case when b.total_records is null then null when b.total_records = 0 then '-' else concat(b.compliance_rate, '%') end compliance_rate,
+           c.total_records, c.compliance_records,
+           case when c.total_records is null then null when c.total_records = 0 then '-' else concat(c.compliance_rate, '%') end compliance_rate,
+           d.total_records, d.compliance_records,
+           case when d.total_records is null then null when d.total_records = 0 then '-' else concat(d.compliance_rate, '%') end compliance_rate,
+           e.total_records,
+           e.notnull_records,
+           case when e.total_records is null then null when e.total_records = 0 then '-' else concat(e.notnull_rate, '%') end notnull_rate,
+           f.total_records,
+           f.notnull_records,
+           case when f.total_records is null then null when f.total_records = 0 then '-' else concat(f.notnull_rate, '%') end notnull_rate,
+           g.total_records,
+           g.notnull_records,
+           case when g.total_records is null then null when g.total_records = 0 then '-' else concat(g.notnull_rate, '%') end notnull_rate,
+           h.total_records,
+           h.notnull_records,
+           case when h.total_records is null then null when h.total_records = 0 then '-' else concat(h.notnull_rate, '%') end notnull_rate,
+           j.total_records,
+           j.notnull_records,
+           case when j.total_records is null then null when j.total_records = 0 then '-' else concat(j.notnull_rate, '%') end notnull_rate,
+           k.total_records,
+           k.notnull_records,
+           case when k.total_records is null then null when k.total_records = 0 then '-' else concat(k.notnull_rate, '%') end notnull_rate,
+           l.total_records,
+           l.association_records,
+           case when l.total_records is null then null when l.total_records = 0 then '-' else concat(l.association_rate, '%') end association_rate,
+           m.total_records,
+           m.association_records,
+           case when m.total_records is null then null when m.total_records = 0 then '-' else concat(m.association_rate, '%') end association_rate,
+           n.total_records,
+           n.association_records,
+           case when n.total_records is null then null when n.total_records = 0 then '-' else concat(n.association_rate, '%') end association_rate
+        from org_list a
+         left join prov_timeliness_org b on b.org_code = a.org_code and b.table_level = '1'
+         left join prov_timeliness_org c on c.org_code = a.org_code and c.table_level = '2'
          left join prov_timeliness_org d on d.org_code = a.org_code and d.table_level = '3'
          left join prov_column_level_org e on e.org_code = a.org_code and e.column_level = '1'
          left join prov_column_level_org f on f.org_code = a.org_code and f.column_level = '2'
@@ -2623,8 +2816,13 @@ order by a.city, a.org_code,c.table_seq
         
     def get_association_sql(self):
         """关联关系明细 SQL 分发方法"""
+        # 处室存在专属关联明细 SQL 时优先使用（如应急处(41张表)输出全部关联关系）
         dept_key = self.get_dept_key()
-        if dept_key == "emergency_warning":
+        own_method = getattr(self, f'get_{dept_key}_association_sql', None)
+        if own_method:
+            return own_method()
+        variant = self.get_sql_variant()
+        if variant == "emergency_warning":
             return self.get_emergency_warning_association_sql()
         else:
             return self.get_early_warning_association_sql()
@@ -2675,6 +2873,33 @@ order by a.city,a.org_code
     left join prov_table_list c on b.table_name = c.table_name 
     left join prov_table_list d on b.association_table_name = d.table_name
     join emergency_association_config e on e.table_name = b.table_name and e.association_table_name = b.association_table_name and e.enable_status = '1'
+where a.is_516_flag ='是'
+order by a.city,a.org_code
+        """
+    
+    # 应急处(41张表)关联关系明细 SQL（输出全部关联关系，共13列，含"应急处独有"标志）
+    def get_emergency_warning_all_association_sql(self):
+        """应急处(41张表)关联关系明细 SQL（输出全部关联关系，共13列，含"应急处独有"标志）"""
+        return f"""
+        select a.city,a.org_code,a.org_name,
+       b.table_name,
+       c.table_comment table_comment,
+       b.association_table_name,
+       d.table_comment   association_table_comment,
+       b.total_records,
+       b.association_records,
+       case when total_records = 0 then '-'
+           else
+               concat(round((b.association_records/b.total_records)*100,2),'%')
+           end association_rate,
+       c.quality_flag,
+       c.responsible_dept_codes,
+       case when e.table_name is not null then '是' else '否' end as emergency_exclusive
+       from org_list a
+    left join prov_association_detail b on b.org_code = a.org_code
+    left join prov_table_list c on b.table_name = c.table_name 
+    left join prov_table_list d on b.association_table_name = d.table_name
+    left join emergency_association_config e on e.table_name = b.table_name and e.association_table_name = b.association_table_name and e.enable_status = '1'
 where a.is_516_flag ='是'
 order by a.city,a.org_code
         """

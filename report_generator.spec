@@ -39,7 +39,11 @@ a = Analysis(
         # 将资源文件打包到 .app/exe 内部，避免移动后找不到
         ('prov_report.db', '.'),
         ('prov_generate_data.sql', '.'),
+        ('emergency_warning.sql', '.'),
+        ('emergency_warning_all.sql', '.'),
         ('疾控下发汇总报告模板.xlsx', '.'),
+        ('应急处下发汇总报告_模板.xlsx', '.'),
+        ('应急处下发汇总报告_模板_全部.xlsx', '.'),
         ('版本日志.txt', '.'),
     ],
     hiddenimports=[

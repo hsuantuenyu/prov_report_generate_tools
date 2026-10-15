@@ -1,0 +1,26 @@
+{
+  "early_warning": {
+    "real": 90,
+    "hour": 100,
+    "other": 100,
+    "association": 90
+  },
+  "emergency_warning": {
+    "real": 90,
+    "hour": 100,
+    "other": 100,
+    "association": 90
+  },
+  "emergency_warning_all": {
+    "real": 90,
+    "hour": 100,
+    "other": 98,
+    "association": 90
+  },
+  "medicine_regulatory": {
+    "real": 90,
+    "hour": 100,
+    "other": 100,
+    "association": 100
+  }
+}

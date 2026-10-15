@@ -638,7 +638,8 @@ class ReportGeneratorTool:
             # aqua 主题自带内部 padding，外层只需要很小的边距即可保持美观对称
             outer_pad = (3, 2, 3, 2)
         else:
-            outer_pad = 10
+            # Windows：收紧外层留白，避免内容与窗口边框之间出现空白
+            outer_pad = 4
         main_frame = ttk.Frame(self.root, padding=outer_pad)
         main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         # 确保根窗口也给 main_frame 均匀分配空间
@@ -686,7 +687,8 @@ class ReportGeneratorTool:
             # aqua 主题的 Notebook/Tab 自带较大内部 padding，只需要小值
             tab_pad = (2, 1, 2, 1)
         else:
-            tab_pad = 10
+            # Windows：左右收紧，避免选项卡内容与边框之间出现大片空白
+            tab_pad = (2, 6, 2, 6)
 
         tab1 = ttk.Frame(self.notebook, padding=tab_pad)
         tab2 = ttk.Frame(self.notebook, padding=tab_pad)
@@ -694,14 +696,14 @@ class ReportGeneratorTool:
         tab4 = ttk.Frame(self.notebook, padding=tab_pad)
         tab5 = ttk.Frame(self.notebook, padding=tab_pad)
 
-        # 选项卡标签：紧凑 padding
-        tab_label_pad = (8, 3) if sys.platform == 'darwin' else (20, 8)
-
-        self.notebook.add(tab1, text="① 数据库测试", padding=tab_label_pad)
-        self.notebook.add(tab2, text="② 数据导入", padding=tab_label_pad)
-        self.notebook.add(tab3, text="③ 数据加工", padding=tab_label_pad)
-        self.notebook.add(tab4, text="④ 数据导出", padding=tab_label_pad)
-        self.notebook.add(tab5, text="⑤ 机构管理", padding=tab_label_pad)
+        # 注意：notebook.add(..., padding=...) 的 padding 是"页面客户区内边距"，
+        # 会让内容四周（尤其左右）出现大片空白，因此此处不传该参数，
+        # 选项卡标签沿用主题默认内边距。
+        self.notebook.add(tab1, text="① 数据库测试")
+        self.notebook.add(tab2, text="② 数据导入")
+        self.notebook.add(tab3, text="③ 数据加工")
+        self.notebook.add(tab4, text="④ 数据导出")
+        self.notebook.add(tab5, text="⑤ 机构管理")
 
         self.create_db_test_tab(tab1)
         self.create_data_import_tab(tab2)
@@ -817,10 +819,10 @@ class ReportGeneratorTool:
         start_date_entry = ttk.Entry(input_frame, textvariable=self.start_date, width=12, font=('微软雅黑', 10), state='readonly')
         start_date_entry.grid(row=0, column=1, padx=5)
 
-        start_calendar_btn = ttk.Button(input_frame, text="📅", width=3, command=lambda: self.popup_calendar('start'))
+        start_calendar_btn = ttk.Button(input_frame, text="📅", width=3, command=lambda: self.open_date_picker('start'))
         start_calendar_btn.grid(row=0, column=2, padx=2)
 
-        start_date_entry.bind('<Button-1>', lambda e: self.popup_calendar('start'))
+        start_date_entry.bind('<Button-1>', lambda e: self.open_date_picker('start'))
 
         # 结束日期（放在独立frame中以便显示/隐藏）
         self.end_date_frame = ttk.Frame(input_frame)
@@ -832,10 +834,10 @@ class ReportGeneratorTool:
         end_date_entry = ttk.Entry(self.end_date_frame, textvariable=self.end_date, width=12, font=('微软雅黑', 10), state='readonly')
         end_date_entry.pack(side=tk.LEFT, padx=5)
 
-        end_calendar_btn = ttk.Button(self.end_date_frame, text="📅", width=3, command=lambda: self.popup_calendar('end'))
+        end_calendar_btn = ttk.Button(self.end_date_frame, text="📅", width=3, command=lambda: self.open_date_picker('end'))
         end_calendar_btn.pack(side=tk.LEFT, padx=2)
 
-        end_date_entry.bind('<Button-1>', lambda e: self.popup_calendar('end'))
+        end_date_entry.bind('<Button-1>', lambda e: self.open_date_picker('end'))
         
         # 绑定日期区间模式变化
         self.date_range_mode.trace_add('write', self.on_date_range_change)
@@ -874,6 +876,63 @@ class ReportGeneratorTool:
 
         scrollbar.config(command=self.file_list_text.yview)
         
+    def open_date_picker(self, date_type='start'):
+        """按当前区间模式打开日期选择器：单日→单日历；区间→一次选择起止日期"""
+        if self.date_range_mode.get() == 'range':
+            self.popup_calendar_range()
+        else:
+            self.popup_calendar(date_type)
+
+    def popup_calendar_range(self):
+        """弹出日历窗口，一次选择开始与结束日期（区间模式）"""
+        top = tk.Toplevel(self.root)
+        top.title("选择日期区间")
+        top.resizable(False, False)
+        top.attributes('-topmost', True)
+        top.geometry(f"+{self.root.winfo_x() + 200}+{self.root.winfo_y() + 100}")
+
+        def parse(text):
+            try:
+                return datetime.strptime(text, '%Y-%m-%d')
+            except (ValueError, TypeError):
+                return datetime.now()
+
+        s = parse(self.start_date.get())
+        e = parse(self.end_date.get())
+
+        body = ttk.Frame(top, padding=10)
+        body.pack()
+
+        start_box = ttk.LabelFrame(body, text="开始日期", padding=5)
+        start_box.grid(row=0, column=0, padx=5)
+        cal_start = Calendar(start_box, selectmode='day', date_pattern='yyyy-mm-dd',
+                             year=s.year, month=s.month, day=s.day)
+        cal_start.pack()
+
+        end_box = ttk.LabelFrame(body, text="结束日期", padding=5)
+        end_box.grid(row=0, column=1, padx=5)
+        cal_end = Calendar(end_box, selectmode='day', date_pattern='yyyy-mm-dd',
+                           year=e.year, month=e.month, day=e.day)
+        cal_end.pack()
+
+        def on_confirm():
+            start_str = cal_start.get_date()
+            end_str = cal_end.get_date()
+            if start_str > end_str:
+                messagebox.showwarning("提示", "开始日期不能晚于结束日期", parent=top)
+                return
+            self.start_date.set(start_str)
+            self.end_date.set(end_str)
+            self.update_export_filename()
+            top.destroy()
+
+        btn_frame = ttk.Frame(body, padding=(0, 8, 0, 0))
+        btn_frame.grid(row=1, column=0, columnspan=2)
+        ttk.Button(btn_frame, text="确定", command=on_confirm).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="取消", command=top.destroy).pack(side=tk.LEFT, padx=5)
+
+        top.wait_window()
+
     def popup_calendar(self, date_type='start'):
         """弹出日历选择窗口"""
         # 创建顶级窗口
@@ -1069,11 +1128,12 @@ class ReportGeneratorTool:
         self.process_status_label.grid(row=1, column=0, sticky=tk.W, pady=2)
         
         process_btn = ttk.Button(frame, text="执行数据加工 SQL", command=self.process_data)
-        process_btn.grid(row=2, column=0, pady=2)
+        process_btn.grid(row=3, column=0, pady=2)
 
         # 达标率设置（%，按业务处室保存）：分两组 —— 表实时性(3项) / 关联一致性(1项)
+        # 置于"执行数据加工"按钮之前，符合"先调整达标率、再执行加工"的操作习惯
         th_frame = ttk.LabelFrame(frame, text="达标率设置（%，按业务处室保存）", padding=lf_pad)
-        th_frame.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=4)
+        th_frame.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=4)
 
         # 输入校验：仅允许整数/小数（不含负号、字母），即只能填非负数值
         self._threshold_validate_cmd = self.root.register(self._validate_threshold_input)

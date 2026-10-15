@@ -4,6 +4,7 @@ import duckdb
 import pandas as pd
 import os
 import re
+import json
 import sys
 import shutil
 import threading
@@ -16,8 +17,8 @@ from tkcalendar import Calendar
 warnings.filterwarnings('ignore', message='pandas only supports SQLAlchemy')
 
 
-VERSION = "V1.13"
-BUILD_DATE = "2026-10-14"
+VERSION = "V1.14"
+BUILD_DATE = "2026-10-15"
 
 # 业务处室配置
 # 字段说明：
@@ -29,6 +30,8 @@ BUILD_DATE = "2026-10-14"
 #   sql_variant      导出 SQL 复用的处室版本，缺省为自身 key
 #   visible          是否在界面下拉框中显示
 #   report_prefix    导出文件名前缀（预警处除外，其前缀随国标/全部切换）
+#   thresholds        数据加工达标率阈值（%），可在界面调整并持久化保存：
+#                     real-实时表  hour-2小时表  other-T+0表  association-关联达标率
 DEPT_CONFIG = {
     "early_warning": {
         "name": "预警处",
@@ -37,6 +40,7 @@ DEPT_CONFIG = {
         "has_national_flag": True,  # 只有预警处有省标/国标区分
         "sql_file": "prov_generate_data.sql",
         "visible": True,
+        "thresholds": {"real": 90, "hour": 100, "other": 100, "association": 90},
         "export_sheets": [
             '地市(州)', '机构汇总', '时效性明细', '必填字段完整性',
             '重要建议填字段完整性', '条件必填字段完整性',
@@ -52,6 +56,7 @@ DEPT_CONFIG = {
         "sql_file": "emergency_warning.sql",
         "visible": True,
         "report_prefix": "应急处下发汇总报告(省标表11张表)_质控日期：",
+        "thresholds": {"real": 90, "hour": 100, "other": 100, "association": 90},
         "export_sheets": [
             '地市(州)', '机构汇总', '时效性明细', '必填字段完整性',
             '重要建议填字段完整性', '条件必填字段完整性',
@@ -69,6 +74,7 @@ DEPT_CONFIG = {
         "sql_variant": "emergency_warning",
         "visible": True,
         "report_prefix": "应急处下发汇总报告(省标表41张表)_质控日期：",
+        "thresholds": {"real": 90, "hour": 100, "other": 98, "association": 90},
         # 模板复制自疾控模板（共 10 个 Sheet，无"业务主键唯一率"），Sheet 与应急处(11张表)一致
         "export_sheets": [
             '地市(州)', '机构汇总', '时效性明细', '必填字段完整性',
@@ -85,6 +91,7 @@ DEPT_CONFIG = {
         "sql_file": "medicine_regulatory.sql",
         "visible": False,  # 界面暂不显示
         "report_prefix": "药政处下发汇总报告(省标表)_质控日期：",
+        "thresholds": {"real": 90, "hour": 100, "other": 100, "association": 100},
         "export_sheets": [
             '地市(州)', '机构汇总', '时效性明细', '必填字段完整性',
             '重要建议填字段完整性', '条件必填字段完整性',
@@ -93,6 +100,15 @@ DEPT_CONFIG = {
         ]
     }
 }
+
+
+def _fmt_threshold(value):
+    """阈值数值 → 字符串（整数不带小数点，便于界面显示）"""
+    if value is None:
+        return ""
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value)
 
 
 # ===== 跨平台路径解析 =====
@@ -335,10 +351,21 @@ class ReportGeneratorTool:
         self.data_imported = False  # 是否已导入数据
         self._is_dept_changing = False  # 标志：是否正在切换处室（避免重复弹窗）
 
+        # 达标率阈值配置（可从界面调整，按处室持久化保存）
+        self.threshold_vars = {k: tk.StringVar() for k in ("real", "hour", "other", "association")}
+        self._threshold_form_dept_key = None    # 当前输入框中显示的处室
+        self.threshold_entries = []             # 输入框控件（用于整体启用/禁用）
+        self._thresholds_editable = False       # 是否处于可编辑状态（默认锁定，防误改）
+        self.thresholds_config = self._load_thresholds_config()
+
         # 绑定切换类别时的检查回调
         self.national_flag_var.trace_add('write', self.on_flag_change)
 
         self.create_main_interface()
+
+        # 初始化达标率输入框（显示当前处室的值）
+        self._threshold_form_dept_key = self.get_dept_key()
+        self.sync_thresholds_ui(self._threshold_form_dept_key)
 
     def get_dept_key(self, dept_name=None):
         """根据业务处室名称获取配置key，或根据当前选择获取"""
@@ -364,13 +391,117 @@ class ReportGeneratorTool:
         """获取导出 SQL 复用的处室版本（sql_variant 缺省为处室自身 key）"""
         dept_config = self.get_current_dept_config()
         return dept_config.get("sql_variant", self.get_dept_key())
-    
+
+    # ===== 达标率阈值配置（持久化） =====
+    _THRESHOLD_KEYS = ("real", "hour", "other", "association")
+
+    def get_thresholds_file_path(self):
+        """达标率配置文件路径（与数据库同目录，保证可写）"""
+        return os.path.join(os.path.dirname(self.db_path), "达标率配置.json")
+
+    def _load_thresholds_config(self):
+        """读取持久化的达标率配置：以内置默认值打底，再叠加本地文件中的有效值"""
+        config = {k: dict(DEPT_CONFIG[k].get("thresholds", {})) for k in DEPT_CONFIG}
+        path = self.get_thresholds_file_path()
+        try:
+            if os.path.exists(path):
+                with open(path, 'r', encoding='utf-8') as f:
+                    saved = json.load(f)
+                for dept_key, vals in saved.items():
+                    if dept_key in config and isinstance(vals, dict):
+                        for key in self._THRESHOLD_KEYS:
+                            if key in vals:
+                                config[dept_key][key] = vals[key]
+        except Exception:
+            pass  # 文件损坏时静默回退到默认值
+        return config
+
+    def save_thresholds_config(self):
+        """把当前阈值配置写入本地文件"""
+        try:
+            with open(self.get_thresholds_file_path(), 'w', encoding='utf-8') as f:
+                json.dump(self.thresholds_config, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
+    def sync_thresholds_ui(self, dept_key):
+        """把指定处室的阈值填入界面输入框"""
+        vals = self.thresholds_config.get(dept_key, {})
+        for key in self._THRESHOLD_KEYS:
+            self.threshold_vars[key].set(_fmt_threshold(vals.get(key)))
+
+    def read_thresholds_from_ui(self, dept_key):
+        """从界面读取阈值并校验写回配置；非法值回退到该处室内置默认值"""
+        defaults = DEPT_CONFIG.get(dept_key, {}).get("thresholds", {})
+        dept_vals = self.thresholds_config.setdefault(dept_key, {})
+        for key in self._THRESHOLD_KEYS:
+            raw = self.threshold_vars[key].get().strip()
+            try:
+                val = float(raw)
+                if val < 0:
+                    raise ValueError
+                dept_vals[key] = int(val) if val.is_integer() else val
+            except (ValueError, TypeError):
+                dept_vals[key] = defaults.get(key, 0)
+                self.threshold_vars[key].set(_fmt_threshold(dept_vals[key]))
+        return dept_vals
+
+    def get_current_thresholds(self):
+        """获取当前处室的阈值（优先取界面值，非法时用持久化/默认值兜底）"""
+        return self.read_thresholds_from_ui(self.get_dept_key())
+
+    def apply_threshold_replacements(self, sql_content, thresholds):
+        """把 SQL 中硬编码的达标阈值替换为当前配置值。
+        b/c/d 分别为实时表、2小时表、T+0表；m 为机构级、t 为规则级关联达标。
+        """
+        mapping = {
+            r"(b\.compliance_rate\s*>=\s*)[0-9.]+": thresholds.get("real"),
+            r"(c\.compliance_rate\s*>=\s*)[0-9.]+": thresholds.get("hour"),
+            r"(d\.compliance_rate\s*>=\s*)[0-9.]+": thresholds.get("other"),
+            r"(m\.association_rate\s*>=\s*)[0-9.]+": thresholds.get("association"),
+            r"(t\.association_rate\s*>=\s*)[0-9.]+": thresholds.get("association"),
+        }
+        for pattern, value in mapping.items():
+            if value is None:
+                continue
+            sql_content = re.sub(pattern, lambda m, v=value: f"{m.group(1)}{v}", sql_content)
+        return sql_content
+
+    def _validate_threshold_input(self, proposed):
+        """达标率输入框校验：仅允许正整数/小数（禁止负号、字母等）"""
+        if proposed == "":
+            return True  # 允许清空后重新输入
+        return re.fullmatch(r"\d+\.?\d*", proposed) is not None
+
+    def commit_thresholds_ui(self, event=None):
+        """失焦时从界面读取当前处室阈值，校验后保存"""
+        self.read_thresholds_from_ui(self.get_dept_key())
+        self.save_thresholds_config()
+
+    def toggle_threshold_edit(self):
+        """切换达标率输入框的编辑/锁定状态，防止误改"""
+        if self._thresholds_editable:
+            # 锁定前先校验并保存当前处室阈值
+            self.commit_thresholds_ui()
+            state, btn_text = 'disabled', "修改"
+        else:
+            state, btn_text = 'normal', "完成"
+        for entry in self.threshold_entries:
+            entry.config(state=state)
+        self._thresholds_editable = not self._thresholds_editable
+        self.threshold_edit_btn.config(text=btn_text)
+
     def on_dept_change(self, event=None):
         """切换业务处室时的回调"""
         self._is_dept_changing = True
         try:
+            # 先保存上一处室界面上填写的达标率，再载入新处室的值
+            if getattr(self, '_threshold_form_dept_key', None):
+                self.read_thresholds_from_ui(self._threshold_form_dept_key)
+                self.save_thresholds_config()
+
             dept_config = self.get_current_dept_config()
-            
+
             # 控制国标/全部选择框的显示/隐藏
             if hasattr(self, 'flag_frame'):
                 if dept_config["has_national_flag"]:
@@ -382,7 +513,11 @@ class ReportGeneratorTool:
                     # 非预警处自动切换到"全部"模式（即省标表）
                     if self.national_flag_var.get() != "all":
                         self.national_flag_var.set("all")
-            
+
+            # 载入新处室的达标率
+            self._threshold_form_dept_key = self.get_dept_key()
+            self.sync_thresholds_ui(self._threshold_form_dept_key)
+
             # 更新模板文件
             self.update_template_by_dept()
             
@@ -935,12 +1070,44 @@ class ReportGeneratorTool:
         
         process_btn = ttk.Button(frame, text="执行数据加工 SQL", command=self.process_data)
         process_btn.grid(row=2, column=0, pady=2)
-        
+
+        # 达标率设置（%，按业务处室保存）：分两组 —— 表实时性(3项) / 关联一致性(1项)
+        th_frame = ttk.LabelFrame(frame, text="达标率设置（%，按业务处室保存）", padding=lf_pad)
+        th_frame.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=4)
+
+        # 输入校验：仅允许整数/小数（不含负号、字母），即只能填非负数值
+        self._threshold_validate_cmd = self.root.register(self._validate_threshold_input)
+        groups = [
+            ("表实时性", [("实时表", "real"), ("2小时表", "hour"), ("T+0表", "other")]),
+            ("关联一致性", [("关联达标率", "association")]),
+        ]
+        for col, (group_name, fields) in enumerate(groups):
+            group_frame = ttk.LabelFrame(th_frame, text=group_name, padding=(4, 2))
+            group_frame.grid(row=0, column=col, sticky=(tk.W, tk.E),
+                             padx=(2, 6) if col == 0 else (0, 8), pady=2)
+            for i, (text, key) in enumerate(fields):
+                ttk.Label(group_frame, text=f"{text}：").grid(row=0, column=i * 2, sticky=tk.W, padx=(4, 2))
+                entry = ttk.Entry(
+                    group_frame, textvariable=self.threshold_vars[key], width=6,
+                    validate='key', validatecommand=(self._threshold_validate_cmd, '%P')
+                )
+                entry.grid(row=0, column=i * 2 + 1, sticky=tk.W, padx=(0, 8))
+                # 失焦时按当前处室校验并保存（避免输入过程中被回退值打断）
+                entry.bind('<FocusOut>', self.commit_thresholds_ui)
+                # 默认锁定，防止误改；需点击"修改"按钮后才可编辑
+                entry.config(state='disabled')
+                self.threshold_entries.append(entry)
+
+        # "修改"按钮：点击后解锁输入框，再次点击锁定并保存
+        self.threshold_edit_btn = ttk.Button(th_frame, text="修改", width=8,
+                                             command=self.toggle_threshold_edit)
+        self.threshold_edit_btn.grid(row=0, column=len(groups), sticky=(tk.W, tk.E), padx=(0, 4), pady=2)
+
         # 创建带滚动条的文本框
         text_frame = ttk.Frame(frame)
-        text_frame.grid(row=3, column=0, pady=(2, 10), sticky=(tk.W, tk.E, tk.N, tk.S))
+        text_frame.grid(row=4, column=0, pady=(2, 10), sticky=(tk.W, tk.E, tk.N, tk.S))
         frame.columnconfigure(0, weight=1)
-        frame.rowconfigure(3, weight=1)
+        frame.rowconfigure(4, weight=1)
         
         # 垂直滚动条
         scrollbar = ttk.Scrollbar(text_frame)
@@ -1041,6 +1208,16 @@ class ReportGeneratorTool:
                     # 同时也要移除 a.national_flag='1' 的情况（明细表中的字段）
                     sql_content = sql_content.replace("and a.national_flag='1'", "")
 
+                # 4. 按当前处室的达标率阈值替换 SQL 中硬编码的达标值
+                thresholds = self.get_current_thresholds()
+                self.save_thresholds_config()
+                sql_content = self.apply_threshold_replacements(sql_content, thresholds)
+
+                self.process_text.insert(
+                    tk.END,
+                    f"达标率阈值：实时 {thresholds['real']}% | 2小时 {thresholds['hour']}% | "
+                    f"T+0 {thresholds['other']}% | 关联 {thresholds['association']}%\n"
+                )
                 self.process_text.insert(tk.END, f"执行 SQL 脚本：{sql_file}\n\n")
 
                 conn = duckdb.connect(self.db_path)
@@ -2816,11 +2993,6 @@ order by a.city, a.org_code,c.table_seq
         
     def get_association_sql(self):
         """关联关系明细 SQL 分发方法"""
-        # 处室存在专属关联明细 SQL 时优先使用（如应急处(41张表)输出全部关联关系）
-        dept_key = self.get_dept_key()
-        own_method = getattr(self, f'get_{dept_key}_association_sql', None)
-        if own_method:
-            return own_method()
         variant = self.get_sql_variant()
         if variant == "emergency_warning":
             return self.get_emergency_warning_association_sql()
@@ -2873,33 +3045,6 @@ order by a.city,a.org_code
     left join prov_table_list c on b.table_name = c.table_name 
     left join prov_table_list d on b.association_table_name = d.table_name
     join emergency_association_config e on e.table_name = b.table_name and e.association_table_name = b.association_table_name and e.enable_status = '1'
-where a.is_516_flag ='是'
-order by a.city,a.org_code
-        """
-    
-    # 应急处(41张表)关联关系明细 SQL（输出全部关联关系，共13列，含"应急处独有"标志）
-    def get_emergency_warning_all_association_sql(self):
-        """应急处(41张表)关联关系明细 SQL（输出全部关联关系，共13列，含"应急处独有"标志）"""
-        return f"""
-        select a.city,a.org_code,a.org_name,
-       b.table_name,
-       c.table_comment table_comment,
-       b.association_table_name,
-       d.table_comment   association_table_comment,
-       b.total_records,
-       b.association_records,
-       case when total_records = 0 then '-'
-           else
-               concat(round((b.association_records/b.total_records)*100,2),'%')
-           end association_rate,
-       c.quality_flag,
-       c.responsible_dept_codes,
-       case when e.table_name is not null then '是' else '否' end as emergency_exclusive
-       from org_list a
-    left join prov_association_detail b on b.org_code = a.org_code
-    left join prov_table_list c on b.table_name = c.table_name 
-    left join prov_table_list d on b.association_table_name = d.table_name
-    left join emergency_association_config e on e.table_name = b.table_name and e.association_table_name = b.association_table_name and e.enable_status = '1'
 where a.is_516_flag ='是'
 order by a.city,a.org_code
         """

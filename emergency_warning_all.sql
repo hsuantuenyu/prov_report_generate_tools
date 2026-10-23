@@ -56,23 +56,22 @@ insert into prov_association_org
 select city,org_code,org_name,'master' as association_table,
 sum(t.total_records) as total_records,
 sum(t.association_records) as association_records,
-round(avg(t.association_rate),2) association_rate
+case when sum(t.total_records) > 0 then
+    round((sum(t.association_records) / sum(t.total_records)) * 100, 2)
+end association_rate
 from (
 select a.city,a.org_code,
        a.org_name,
        concat(a.table_name,',',a.association_table_name) as association_table,
        sum(a.total_records) total_records,
-       sum(a.association_records) association_records,
-       case when sum(a.total_records) >0 then
-           round((sum(a.association_records)/sum(a.total_records))*100,2)
-       end association_rate
-       from prov_association_detail a,prov_table_list b 
+       sum(a.association_records) association_records
+       from prov_association_detail a,prov_table_list b
 where a.table_name = b.table_name and b.enable_status = '1'
-and exists (select 1 from emergency_association_config c where a.table_name = c.table_name 
-and a.association_table_name = c.association_table_name 
+and exists (select 1 from emergency_association_config c where a.table_name = c.table_name
+and a.association_table_name = c.association_table_name
 and c.association_type = '3')
-group by a.city, a.org_code, a.org_name,a.table_name,a.association_table_name) t 
-group by t.city,t.org_code,t.org_name 
+group by a.city, a.org_code, a.org_name,a.table_name,a.association_table_name) t
+group by t.city,t.org_code,t.org_name
 order by t.city,t.org_code;
 
 -- 关联门急诊诊断和在院诊断
@@ -80,23 +79,22 @@ insert into prov_association_org
 select city,org_code,org_name,'other' as association_table,
 sum(t.total_records) as total_records,
 sum(t.association_records) as association_records,
-round(avg(t.association_rate),2) association_rate
+case when sum(t.total_records) > 0 then
+    round((sum(t.association_records) / sum(t.total_records)) * 100, 2)
+end association_rate
 from (
 select a.city,a.org_code,
        a.org_name,
        concat(a.table_name,',',a.association_table_name) as association_table,
        sum(a.total_records) total_records,
-       sum(a.association_records) association_records,
-       case when sum(a.total_records) >0 then
-           round((sum(a.association_records)/sum(a.total_records))*100,2)
-       end association_rate
-       from prov_association_detail a,prov_table_list b 
+       sum(a.association_records) association_records
+       from prov_association_detail a,prov_table_list b
 where a.table_name = b.table_name and b.enable_status = '1'
-and not exists (select 1 from emergency_association_config c where a.table_name = c.table_name 
-and a.association_table_name = c.association_table_name 
+and not exists (select 1 from emergency_association_config c where a.table_name = c.table_name
+and a.association_table_name = c.association_table_name
 and c.association_type = '3')
-group by a.city, a.org_code, a.org_name,a.table_name,a.association_table_name) t 
-group by t.city,t.org_code,t.org_name 
+group by a.city, a.org_code, a.org_name,a.table_name,a.association_table_name) t
+group by t.city,t.org_code,t.org_name
 order by t.city,t.org_code;
 
 -- 主诉

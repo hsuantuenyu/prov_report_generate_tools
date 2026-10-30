@@ -250,7 +250,7 @@ truncate table prov_city_summary;
 
 insert into prov_city_summary
 select a.city,
-       count(a.org_code) org_cnt,
+       count(distinct a.org_code) org_cnt,
        sum(case when b.compliance_rate >=90 then 1 else 0 end) real_cnt,
        sum(case when c.compliance_rate >=100 then 1 else 0 end ) hour_cnt,
        sum(case when d.compliance_rate >=100 then 1 else 0 end) other_cnt,

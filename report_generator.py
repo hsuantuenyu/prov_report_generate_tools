@@ -17,8 +17,8 @@ from tkcalendar import Calendar
 warnings.filterwarnings('ignore', message='pandas only supports SQLAlchemy')
 
 
-VERSION = "V1.14"
-BUILD_DATE = "2026-10-15"
+VERSION = "V1.15"
+BUILD_DATE = "2026-10-30"
 
 # 业务处室配置
 # 字段说明：
@@ -2392,7 +2392,7 @@ in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realt
     def get_early_warning_city_state_sql(self):
         """预警处地市汇总 SQL"""
         return f"""
-        select city,
+        select distinct city,
            org_cnt,
            real_cnt,
            concat(round((real_cnt / org_cnt) * 100, 2), '%') as real_rate,
@@ -2470,7 +2470,7 @@ in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realt
     def get_emergency_warning_city_state_sql(self):
         """应急处地市汇总 SQL"""
         return f"""
-        select city,
+        select distinct city,
            org_cnt,
            real_cnt,
            concat(round((real_cnt / org_cnt) * 100, 2), '%') as real_rate,
@@ -2537,7 +2537,7 @@ in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realt
     def get_emergency_warning_all_city_state_sql(self):
         """应急处(41张表)地市汇总 SQL（含2小时列，共28列）"""
         return f"""
-        select city,
+        select distinct city,
            org_cnt,
            real_cnt,
            concat(round((real_cnt / org_cnt) * 100, 2), '%') as real_rate,
@@ -2608,7 +2608,7 @@ in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realt
     def get_medicine_regulatory_city_state_sql(self):
         """药政处地市汇总 SQL"""
         return f"""
-        select city,
+        select distinct city,
            org_cnt,
            other_cnt,
            concat(round((other_cnt / org_cnt) * 100, 2), '%') as other_rate,
@@ -2697,7 +2697,7 @@ in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realt
     def get_early_warning_org_summary_sql(self):
         """预警处机构汇总 SQL"""
         return f"""
-        select a.city, a.org_code, a.org_name,
+        select distinct a.city, a.org_code, a.org_name,
            b.total_records, b.compliance_records,
            case when b.total_records is null then null when b.total_records = 0 then '-' else concat(b.compliance_rate, '%') end compliance_rate,
            c.total_records, c.compliance_records,
@@ -2756,7 +2756,7 @@ in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realt
     def get_emergency_warning_org_summary_sql(self):
         """应急处机构汇总 SQL"""
         return f"""
-        select a.city, a.org_code, a.org_name,
+        select distinct a.city, a.org_code, a.org_name,
            b.total_records, b.compliance_records,
            case when b.total_records is null then null when b.total_records = 0 then '-' else concat(b.compliance_rate, '%') end compliance_rate,
            d.total_records, d.compliance_records,
@@ -2807,7 +2807,7 @@ in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realt
     def get_emergency_warning_all_org_summary_sql(self):
         """应急处(41张表)机构汇总 SQL（含2小时列，共39列）"""
         return f"""
-        select a.city, a.org_code, a.org_name,
+        select distinct a.city, a.org_code, a.org_name,
            b.total_records, b.compliance_records,
            case when b.total_records is null then null when b.total_records = 0 then '-' else concat(b.compliance_rate, '%') end compliance_rate,
            c.total_records, c.compliance_records,
@@ -2861,7 +2861,7 @@ in('prov_association_org', 'prov_column_level_org', 'prov_dict_org', 'prov_realt
     def get_medicine_regulatory_org_summary_sql(self):
         """药政处机构汇总 SQL"""
         return f"""
-        select a.city, a.org_code, a.org_name,
+        select distinct a.city, a.org_code, a.org_name,
            d.total_records, d.compliance_records,
            case when d.total_records is null then null when d.total_records = 0 then '-' else concat(d.compliance_rate, '%') end compliance_rate,
            e.total_records,

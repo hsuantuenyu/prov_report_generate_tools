@@ -211,9 +211,9 @@ truncate table prov_city_summary;
 insert into prov_city_summary
 select a.city,
        count(distinct a.org_code) org_cnt,
-       sum(case when b.compliance_rate >=90 then 1 else 0 end) real_cnt,
-       sum(case when c.compliance_rate >=100 then 1 else 0 end ) hour_cnt,
-       sum(case when d.compliance_rate >=100 then 1 else 0 end) other_cnt,
+       count(distinct case when b.compliance_rate >=90 then a.org_code end) real_cnt,
+       count(distinct case when c.compliance_rate >=100 then a.org_code end ) hour_cnt,
+       count(distinct case when d.compliance_rate >=100 then a.org_code end) other_cnt,
        sum(e.total_records) e_total_records,
        sum(e.notnull_records) e_notnull_records,
        sum(f.total_records) f_total_records,
@@ -228,7 +228,7 @@ select a.city,
        sum(j.notnull_records) j_notnull_records,
        sum(k.total_records) k_total_records,
        sum(k.notnull_records) k_notnull_records,
-       sum(case when m.association_rate >=90 then 1 else 0 end) association_org_cnt
+       count(distinct case when m.association_rate >=90 then a.org_code end) association_org_cnt
 from org_list a
  left join prov_timeliness_org b on b.org_code = a.org_code and b.table_level = '1'
          left join prov_timeliness_org c on c.org_code = a.org_code and c.table_level = '2'
